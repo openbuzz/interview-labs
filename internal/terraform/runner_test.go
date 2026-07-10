@@ -32,9 +32,10 @@ func fakeRunner(t *testing.T) (*Runner, string) {
 		}
 	}
 	r := &Runner{
-		Bin:     Binary{Name: "terraform", Path: bin, Version: "1.9.5"},
-		Dir:     work,
-		Env:     RunEnv("tok-123", filepath.Join(dir, "plugins")),
+		Bin: Binary{Name: "terraform", Path: bin, Version: "1.9.5"},
+		Dir: work,
+		Env: RunEnv(map[string]string{"DIGITALOCEAN_TOKEN": "tok-123"},
+			filepath.Join(dir, "plugins")),
 		LogsDir: logs,
 		Out:     &bytes.Buffer{},
 	}
@@ -81,6 +82,30 @@ func TestLogAppendsAcrossAttempts(t *testing.T) {
 	}
 	if got := strings.Count(string(log), "--- "); got != 2 {
 		t.Fatalf("separator count = %d, want 2", got)
+	}
+}
+
+func TestRunEnvAppendsSortedCreds(t *testing.T) {
+	env := RunEnv(map[string]string{
+		"B_TOKEN": "b", "A_TOKEN": "a",
+	}, "/cache")
+
+	var got []string
+	for _, e := range env {
+		if e == "A_TOKEN=a" || e == "B_TOKEN=b" ||
+			e == "TF_PLUGIN_CACHE_DIR=/cache" || e == "TF_IN_AUTOMATION=1" {
+			got = append(got, e)
+		}
+	}
+	want := []string{"A_TOKEN=a", "B_TOKEN=b", "TF_PLUGIN_CACHE_DIR=/cache",
+		"TF_IN_AUTOMATION=1"}
+	if len(got) != len(want) {
+		t.Fatalf("env entries = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("env[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

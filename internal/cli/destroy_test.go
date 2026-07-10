@@ -27,7 +27,7 @@ func destroySetup(t *testing.T) (*session.Session, string) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin")
 
-	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64",
+	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64", "root",
 		map[string]string{"vm": "digitalocean"},
 		session.TerraformInfo{Binary: "terraform", Version: "1.9.5"})
 	if err != nil {
@@ -62,7 +62,9 @@ func TestDestroySoleSessionWithYes(t *testing.T) {
 }
 
 func TestDestroyNoSessionsErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	out, code := runCmd(t, "destroy", "--yes")
 	if code != 1 {
 		t.Fatalf("exit = %d\n%s", code, out)

@@ -75,7 +75,8 @@ init any time to add or update providers.`,
 				p, _ := config.Path()
 				return usageError(fmt.Sprintf(
 					"interview init needs a terminal; write %s yourself or set "+
-						"DIGITALOCEAN_TOKEN (see config.yaml docs in the README)", p))
+						"provider env vars (DIGITALOCEAN_TOKEN, HCLOUD_TOKEN, or "+
+						"AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)", p))
 			}
 			fmt.Fprintln(out, ui.Logo())
 

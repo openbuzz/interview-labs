@@ -13,6 +13,8 @@ func TestInfraFSHasSourcesOnly(t *testing.T) {
 		"terraform/main.tf",
 		"terraform/.terraform.lock.hcl",
 		"terraform/digitalocean/main.tf",
+		"terraform/hetzner/main.tf",
+		"terraform/aws/main.tf",
 	} {
 		if _, err := fs.Stat(InfraFS, want); err != nil {
 			t.Errorf("missing %s: %v", want, err)

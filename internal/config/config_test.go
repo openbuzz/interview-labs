@@ -55,16 +55,6 @@ func TestRoundTripProvidersTree(t *testing.T) {
 	}
 }
 
-func TestTokenEnvBeatsFile(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("DIGITALOCEAN_TOKEN", "env-tok")
-	c := Config{}
-	c.Providers.DigitalOcean.Token = "file-tok"
-	if got := c.Token(); got != "env-tok" {
-		t.Fatalf("Token() = %q, want env-tok", got)
-	}
-}
-
 func TestLegacyFlatKeyIgnored(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -80,9 +70,8 @@ func TestLegacyFlatKeyIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("DIGITALOCEAN_TOKEN", "")
-	if got.Token() != "" {
-		t.Fatalf("legacy key leaked into token: %q", got.Token())
+	if got.Providers.DigitalOcean.Token != "" {
+		t.Fatalf("legacy key leaked into token: %q", got.Providers.DigitalOcean.Token)
 	}
 }
 
@@ -95,5 +84,34 @@ func TestPathHonorsXDG(t *testing.T) {
 	}
 	if p != filepath.Join(dir, "interview", "config.yaml") {
 		t.Fatalf("Path() = %s", p)
+	}
+}
+
+func TestRoundTripAllProviders(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	in := Config{}
+	in.Providers.DigitalOcean = DigitalOcean{Token: "do-t", Region: "fra1",
+		Instance: "s-1vcpu-1gb"}
+	in.Providers.Hetzner = Hetzner{Token: "hz-t", Region: "fsn1", Instance: "cx22"}
+	in.Providers.AWS = AWS{AccessKeyID: "AKIA1", SecretAccessKey: "sec",
+		Region: "eu-central-1", Instance: "m7i.xlarge"}
+	in.Roles.VM = "hetzner"
+	if err := in.Write(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Providers.Hetzner != in.Providers.Hetzner {
+		t.Fatalf("hetzner = %+v", out.Providers.Hetzner)
+	}
+	if out.Providers.AWS != in.Providers.AWS {
+		t.Fatalf("aws = %+v", out.Providers.AWS)
+	}
+	if out.Roles.VM != "hetzner" {
+		t.Fatalf("roles.vm = %q", out.Roles.VM)
 	}
 }

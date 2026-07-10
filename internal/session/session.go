@@ -36,6 +36,7 @@ type Metadata struct {
 	Size      string            `json:"size"`
 	Image     string            `json:"image"`
 	Roles     map[string]string `json:"roles"`
+	SSHUser   string            `json:"ssh_user,omitempty"`
 	Terraform TerraformInfo     `json:"terraform"`
 	IP        string            `json:"ip,omitempty"`
 	Status    string            `json:"status"`
@@ -70,7 +71,7 @@ func exists(p string) bool {
 }
 
 // New mints a session: slug, directory layout, initial metadata.
-func New(region, size, image string, roles map[string]string,
+func New(region, size, image, sshUser string, roles map[string]string,
 	tf TerraformInfo) (*Session, error) {
 	root, err := Root()
 	if err != nil {
@@ -95,6 +96,7 @@ func New(region, size, image string, roles map[string]string,
 			Size:      size,
 			Image:     image,
 			Roles:     roles,
+			SSHUser:   sshUser,
 			Terraform: tf,
 			Status:    StatusLaunching,
 			Phase:     "session",
@@ -160,6 +162,9 @@ func Get(slug string) (*Session, error) {
 	}
 	if s.Meta.Roles == nil {
 		s.Meta.Roles = map[string]string{"vm": "digitalocean"}
+	}
+	if s.Meta.SSHUser == "" {
+		s.Meta.SSHUser = "root"
 	}
 	return s, nil
 }

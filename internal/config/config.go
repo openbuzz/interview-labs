@@ -17,9 +17,26 @@ type DigitalOcean struct {
 	Instance string `yaml:"instance"`
 }
 
+// Hetzner is the Hetzner Cloud provider configuration.
+type Hetzner struct {
+	Token    string `yaml:"token"`
+	Region   string `yaml:"region"`
+	Instance string `yaml:"instance"`
+}
+
+// AWS is the AWS provider configuration (long-term IAM user credentials).
+type AWS struct {
+	AccessKeyID     string `yaml:"access_key_id"`
+	SecretAccessKey string `yaml:"secret_access_key"`
+	Region          string `yaml:"region"`
+	Instance        string `yaml:"instance"`
+}
+
 // Providers holds per-provider configuration.
 type Providers struct {
 	DigitalOcean DigitalOcean `yaml:"digitalocean"`
+	Hetzner      Hetzner      `yaml:"hetzner"`
+	AWS          AWS          `yaml:"aws"`
 }
 
 // Roles maps a role to the provider that fulfills it.
@@ -96,12 +113,4 @@ func (c Config) Write() error {
 		return err
 	}
 	return os.Rename(tmp.Name(), p)
-}
-
-// Token resolves the DigitalOcean token: env beats file.
-func (c Config) Token() string {
-	if t := os.Getenv("DIGITALOCEAN_TOKEN"); t != "" {
-		return t
-	}
-	return c.Providers.DigitalOcean.Token
 }

@@ -36,3 +36,37 @@ func TestByRole(t *testing.T) {
 		t.Fatalf("ByRole(nil) = %v, want nil", got)
 	}
 }
+
+// fakeVM proves the VM contract is implementable and keeps ByRole working
+// on values that carry the capability.
+type fakeVM struct{}
+
+func (fakeVM) Name() string                                       { return "fake" }
+func (fakeVM) Label() string                                      { return "Fake" }
+func (fakeVM) Roles() []Role                                      { return []Role{RoleVM} }
+func (fakeVM) Configured(config.Config) bool                      { return true }
+func (fakeVM) Configure(context.Context, *config.Config) error    { return nil }
+func (fakeVM) Image() string                                      { return "img" }
+func (fakeVM) SSHUser() string                                    { return "root" }
+func (fakeVM) EnvCreds(config.Config) map[string]string           { return nil }
+func (fakeVM) ValidateCreds(context.Context, config.Config) error { return nil }
+func (fakeVM) Regions(context.Context, config.Config) ([]Option, error) {
+	return []Option{{Slug: "r1", Label: "r1  Region"}}, nil
+}
+func (fakeVM) Sizes(context.Context, config.Config, string) ([]Option, error) {
+	return nil, nil
+}
+func (fakeVM) Defaults(config.Config) (string, string)    { return "", "" }
+func (fakeVM) SetDefaults(*config.Config, string, string) {}
+
+func TestVMSatisfiesProvider(t *testing.T) {
+	var vm VM = fakeVM{}
+
+	got := ByRole([]Provider{vm}, RoleVM)
+	if len(got) != 1 {
+		t.Fatalf("ByRole kept %d providers, want 1", len(got))
+	}
+	if _, ok := got[0].(VM); !ok {
+		t.Fatal("VM capability lost through ByRole")
+	}
+}

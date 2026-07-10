@@ -7,5 +7,6 @@ import "embed"
 // Patterns name the sources explicitly so a stray .terraform/ from an
 // in-repo init never rides along (the lock file is the one dot-path wanted).
 //
-//go:embed terraform/*.tf terraform/.terraform.lock.hcl terraform/digitalocean
+//go:embed terraform/*.tf terraform/.terraform.lock.hcl
+//go:embed terraform/digitalocean terraform/hetzner terraform/aws
 var InfraFS embed.FS

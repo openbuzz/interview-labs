@@ -11,13 +11,15 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/openbuzz/interview-labs/internal/aws"
 	"github.com/openbuzz/interview-labs/internal/digitalocean"
+	"github.com/openbuzz/interview-labs/internal/hetzner"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 // providers is the registry, in menu order.
-var providers = []provider.Provider{digitalocean.New()}
+var providers = []provider.Provider{digitalocean.New(), hetzner.New(), aws.New()}
 
 type usageErr struct{ msg string }
 

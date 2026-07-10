@@ -12,7 +12,7 @@ func testTF() TerraformInfo { return TerraformInfo{Binary: "terraform", Version:
 
 func newTestSession(t *testing.T) *Session {
 	t.Helper()
-	s, err := New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64",
+	s, err := New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64", "root",
 		map[string]string{"vm": "digitalocean"}, testTF())
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestAge(t *testing.T) {
 
 func TestNewRecordsRoles(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	s, err := New("fra1", "s-1vcpu-1gb", "img",
+	s, err := New("fra1", "s-1vcpu-1gb", "img", "root",
 		map[string]string{"vm": "digitalocean"}, TerraformInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestNewRecordsRoles(t *testing.T) {
 
 func TestGetDefaultsSchema1Roles(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	s, err := New("fra1", "s-1vcpu-1gb", "img",
+	s, err := New("fra1", "s-1vcpu-1gb", "img", "root",
 		map[string]string{"vm": "digitalocean"}, TerraformInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -183,5 +183,35 @@ func TestGetDefaultsSchema1Roles(t *testing.T) {
 	}
 	if got.Meta.Roles["vm"] != "digitalocean" {
 		t.Fatalf("schema-1 fallback roles = %v", got.Meta.Roles)
+	}
+}
+
+func TestSSHUserPersistsAndBackfills(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	s, err := New("fra1", "s-1vcpu-1gb", "img", "ubuntu",
+		map[string]string{"vm": "aws"}, TerraformInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(s.Meta.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta.SSHUser != "ubuntu" {
+		t.Fatalf("ssh user = %q, want ubuntu", got.Meta.SSHUser)
+	}
+
+	// legacy metadata without ssh_user reads back as root
+	got.Meta.SSHUser = ""
+	if err := got.Save(); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := Get(s.Meta.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Meta.SSHUser != "root" {
+		t.Fatalf("legacy ssh user = %q, want root", legacy.Meta.SSHUser)
 	}
 }

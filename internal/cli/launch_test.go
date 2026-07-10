@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/openbuzz/interview-labs/internal/config"
-	"github.com/openbuzz/interview-labs/internal/digitalocean"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	sshtest "github.com/openbuzz/interview-labs/internal/ssh"
@@ -20,7 +19,8 @@ import (
 // fakeTFForLaunch installs a fake terraform that emits an ip output and, on apply,
 // drops a keypair into the session ssh dir — mirroring what real terraform now does —
 // so the whole pipeline runs against a local in-process ssh server without a cloud.
-func fakeTFForLaunch(t *testing.T, ip, privPEM, pub string) {
+// Returns the fake's dir so callers can inspect env.txt and the staged tfvars.
+func fakeTFForLaunch(t *testing.T, ip, privPEM, pub string) string {
 	t.Helper()
 	dir := t.TempDir()
 	outputs := `{"ip":{"value":"` + ip + `"}}`
@@ -37,8 +37,9 @@ func fakeTFForLaunch(t *testing.T, ip, privPEM, pub string) {
 	script := "#!/bin/sh\n" +
 		"[ \"$1\" = version ] && echo '{\"terraform_version\":\"1.9.5\"}'\n" +
 		"if [ \"$1\" = apply ]; then\n" +
-		"  cp " + filepath.Join(dir, "key") + " ../ssh/key\n" +
-		"  cp " + filepath.Join(dir, "key.pub") + " ../ssh/key.pub\n" +
+		"  cp " + filepath.Join(dir, "key") + " ../ssh/key || exit 1\n" +
+		"  cp " + filepath.Join(dir, "key.pub") + " ../ssh/key.pub || exit 1\n" +
+		"  env >" + filepath.Join(dir, "env.txt") + "\n" +
 		"fi\n" +
 		"[ \"$1\" = output ] && cat " + filepath.Join(dir, "outputs.json") + "\n" +
 		"exit 0\n"
@@ -47,6 +48,7 @@ func fakeTFForLaunch(t *testing.T, ip, privPEM, pub string) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin"+
 		string(os.PathListSeparator)+"/usr/bin")
+	return dir
 }
 
 // swapTTY overrides the isTTY seam for the test's duration.
@@ -69,7 +71,7 @@ func TestLaunchPipelineAgainstLocalSSH(t *testing.T) {
 		t.Fatal(err)
 	}
 	port, _ := strconv.Atoi(portStr)
-	fakeTFForLaunch(t, host, privPEM, pub)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
 
 	oldPort := sshDialPort
 	sshDialPort = port
@@ -101,8 +103,10 @@ func TestLaunchPipelineAgainstLocalSSH(t *testing.T) {
 
 func TestLaunchNonTTYWithoutFlagsExits2(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
-	fakeTFForLaunch(t, "127.0.0.1", "", "")
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 	old := isTTY
 	isTTY = func() bool { return false }
 	t.Cleanup(func() { isTTY = old })
@@ -115,7 +119,12 @@ func TestLaunchNonTTYWithoutFlagsExits2(t *testing.T) {
 
 func TestLaunchNoTokenFails(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	os.Unsetenv("DIGITALOCEAN_TOKEN")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 
 	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
 	if code != 1 {
@@ -128,7 +137,12 @@ func TestLaunchNoTokenFails(t *testing.T) {
 
 func TestLaunchFailsWithoutConfiguredProvider(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 
 	out, code := runCmd(t, "launch")
 
@@ -144,6 +158,8 @@ func TestLaunchFailsWithoutConfiguredProvider(t *testing.T) {
 
 func TestLaunchPersistsProviderPick(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
 	swapTTY(t, true)
 	oldPick := pickVMProvider
@@ -157,8 +173,8 @@ func TestLaunchPersistsProviderPick(t *testing.T) {
 	// Make the run stop right after the pick: leave pickRegionSize failing fast.
 	oldRS := pickRegionSize
 	t.Cleanup(func() { pickRegionSize = oldRS })
-	pickRegionSize = func(ctx context.Context, token,
-		preRegion, preInstance string) (string, string, error) {
+	pickRegionSize = func(ctx context.Context, vm provider.VM,
+		cfg config.Config) (string, string, error) {
 		return "", "", fmt.Errorf("stop here")
 	}
 
@@ -176,19 +192,10 @@ func TestLaunchPersistsProviderPick(t *testing.T) {
 	}
 }
 
-func TestSizeLabelShowsHourly(t *testing.T) {
-	got := sizeLabel(digitalocean.Size{
-		Slug: "s-1vcpu-1gb", VCPUs: 1, Memory: 1024, Disk: 25,
-		PriceHourly: 0.00744, PriceMonthly: 5,
-	})
-	want := "s-1vcpu-1gb  1vcpu 1024MB 25GB  $0.007/hr ($5/mo)"
-	if got != want {
-		t.Fatalf("label = %q, want %q", got, want)
-	}
-}
-
 func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
 	swapTTY(t, true)
 	oldPick, oldRS := pickVMProvider, pickRegionSize
@@ -198,14 +205,14 @@ func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 		return configured[0], nil
 	}
 	var sawPreRegion, sawPreInstance string
-	pickRegionSize = func(_ context.Context, _ string,
-		preRegion, preInstance string) (string, string, error) {
-		sawPreRegion, sawPreInstance = preRegion, preInstance
+	pickRegionSize = func(_ context.Context, vm provider.VM,
+		cfg config.Config) (string, string, error) {
+		sawPreRegion, sawPreInstance = vm.Defaults(cfg)
 		return "fra1", "s-1vcpu-1gb", nil
 	}
 	// Use the file's existing fake-terraform PATH helper so terraform.Find
 	// succeeds; the run may fail later — assert persisted config regardless.
-	fakeTFForLaunch(t, "127.0.0.1", "", "")
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
 	_, _ = runCmd(t, "launch")
 
@@ -219,5 +226,110 @@ func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 	}
 	if sawPreRegion != "" || sawPreInstance != "" {
 		t.Fatalf("first-run preselects = %q/%q, want empty", sawPreRegion, sawPreInstance)
+	}
+}
+
+func TestLaunchHetznerPipeline(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("HCLOUD_TOKEN", "hz-tok")
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	dir := fakeTFForLaunch(t, host, privPEM, pub)
+
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fsn1", "--size", "cx22")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	all, err := session.List()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("sessions: %d, %v", len(all), err)
+	}
+	s := all[0]
+	if s.Meta.Roles["vm"] != "hetzner" || s.Meta.SSHUser != "root" ||
+		s.Meta.Image != "ubuntu-26.04" {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+
+	envDump, err := os.ReadFile(filepath.Join(dir, "env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(envDump), "HCLOUD_TOKEN=hz-tok") {
+		t.Fatal("terraform child env missing HCLOUD_TOKEN")
+	}
+	if strings.Contains(string(envDump), "DIGITALOCEAN_TOKEN=hz-tok") {
+		t.Fatal("foreign token leaked into terraform env")
+	}
+
+	tfvars, err := os.ReadFile(
+		filepath.Join(s.TerraformDir(), "terraform.tfvars.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tfvars), `"cloud_provider": "hetzner"`) {
+		t.Fatalf("tfvars:\n%s", tfvars)
+	}
+}
+
+func TestLaunchAWSPipeline(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "aws-id")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "aws-sec")
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	dir := fakeTFForLaunch(t, host, privPEM, pub)
+
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "eu-central-1", "--size", "m7i.xlarge")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	all, err := session.List()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("sessions: %d, %v", len(all), err)
+	}
+	s := all[0]
+	if s.Meta.Roles["vm"] != "aws" || s.Meta.SSHUser != "ubuntu" {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+
+	envDump, err := os.ReadFile(filepath.Join(dir, "env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"AWS_ACCESS_KEY_ID=aws-id", "AWS_SECRET_ACCESS_KEY=aws-sec",
+	} {
+		if !strings.Contains(string(envDump), want) {
+			t.Fatalf("terraform child env missing %s", want)
+		}
 	}
 }

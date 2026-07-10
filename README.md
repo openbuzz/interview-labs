@@ -1,13 +1,14 @@
 # interview-labs
 
-`interview` deploys a disposable DigitalOcean VM per interview session, connects over
-SSH, and tears it down when you are done. Sessions run in parallel; state lives under
-your XDG directories and survives restarts.
+`interview` deploys a disposable cloud VM per interview session — DigitalOcean, Hetzner
+Cloud, or AWS — connects over SSH, and tears it down when you are done. Sessions run in
+parallel; state lives under your XDG directories and survives restarts.
 
 ## Requirements
 
 - terraform or opentofu on PATH (terraform preferred when both exist)
-- a DigitalOcean API token
+- credentials for at least one provider: a DigitalOcean API token, a Hetzner Cloud API
+  token, or AWS IAM user credentials
 - optional: an ssh client for `interview ssh`
 
 ## Install
@@ -27,7 +28,8 @@ interview ssh       # shell into a session VM
 interview destroy   # tear a session down
 ```
 
-Non-interactive use: set `DIGITALOCEAN_TOKEN` and pass `--region`/`--size` to launch,
+Non-interactive use: set a provider env var (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, or
+`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`) and pass `--region`/`--size` to launch,
 `--yes` to destroy.
 
 ## State
@@ -40,9 +42,18 @@ Non-interactive use: set `DIGITALOCEAN_TOKEN` and pass `--region`/`--size` to la
       token: "dop_v1_..."
       region: fra1
       instance: s-1vcpu-1gb
+    hetzner:
+      token: "..."
+      region: fsn1
+      instance: cx22
+    aws:
+      access_key_id: "AKIA..."
+      secret_access_key: "..."
+      region: eu-central-1
+      instance: m7i.xlarge
 
   roles:
-    vm: digitalocean
+    vm: hetzner
   ```
 
 - sessions: `$XDG_STATE_HOME/interview/sessions/<slug>/` — terraform state, ssh key,

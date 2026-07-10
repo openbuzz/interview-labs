@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/openbuzz/interview-labs/internal/config"
+	"github.com/openbuzz/interview-labs/internal/provider"
 )
 
 // runCmd executes the root command with args, capturing stdout+stderr.
@@ -34,6 +37,9 @@ func runCmd(t *testing.T, args ...string) (string, int) {
 // TestRunCmdMapsCobraUsageToExit2 guards runCmd against drifting from run()'s
 // exit-code mapping in root.go (IsUsage || isCobraUsage).
 func TestRunCmdMapsCobraUsageToExit2(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	out, code := runCmd(t, "definitely-not-a-command")
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2\n%s", code, out)
@@ -61,15 +67,18 @@ func TestDoctorAllGood(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
-	old := validateDOToken
-	validateDOToken = func(ctx context.Context, token string) error { return nil }
-	t.Cleanup(func() { validateDOToken = old })
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	old := validateCreds
+	validateCreds = func(context.Context, provider.VM, config.Config) error { return nil }
+	t.Cleanup(func() { validateCreds = old })
 
 	out, code := runCmd(t, "doctor")
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
-	for _, want := range []string{"terraform", "1.9.5", "credentials"} {
+	for _, want := range []string{"terraform", "1.9.5", "DigitalOcean", "credentials valid"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
@@ -81,7 +90,10 @@ func TestDoctorNoTFBinaryFails(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	os.Unsetenv("DIGITALOCEAN_TOKEN")
+	t.Setenv("DIGITALOCEAN_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 
 	out, code := runCmd(t, "doctor")
 	if code != 1 {
@@ -89,6 +101,11 @@ func TestDoctorNoTFBinaryFails(t *testing.T) {
 	}
 	if !strings.Contains(out, "✗") {
 		t.Fatalf("no fail glyph:\n%s", out)
+	}
+	for _, want := range []string{"not configured", "run interview init"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -101,9 +118,12 @@ func TestDoctorMissingSSHIsNote(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
-	oldValidate := validateDOToken
-	validateDOToken = func(ctx context.Context, token string) error { return nil }
-	t.Cleanup(func() { validateDOToken = oldValidate })
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	oldValidate := validateCreds
+	validateCreds = func(context.Context, provider.VM, config.Config) error { return nil }
+	t.Cleanup(func() { validateCreds = oldValidate })
 
 	out, code := runCmd(t, "doctor")
 	if code != 0 {
@@ -120,11 +140,14 @@ func TestDoctorRejectedTokenFails(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "bad")
-	old := validateDOToken
-	validateDOToken = func(ctx context.Context, token string) error {
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	old := validateCreds
+	validateCreds = func(context.Context, provider.VM, config.Config) error {
 		return errors.New("token rejected by DigitalOcean")
 	}
-	t.Cleanup(func() { validateDOToken = old })
+	t.Cleanup(func() { validateCreds = old })
 
 	out, code := runCmd(t, "doctor")
 	if code != 1 {
@@ -147,9 +170,12 @@ func TestDoctorXDGUnwritableDirFails(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
-	old := validateDOToken
-	validateDOToken = func(ctx context.Context, token string) error { return nil }
-	t.Cleanup(func() { validateDOToken = old })
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	old := validateCreds
+	validateCreds = func(context.Context, provider.VM, config.Config) error { return nil }
+	t.Cleanup(func() { validateCreds = old })
 
 	out, code := runCmd(t, "doctor")
 	if code != 1 {

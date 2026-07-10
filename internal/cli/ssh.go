@@ -75,7 +75,7 @@ slug or pick one from the menu.`,
 					s.Meta.Slug, s.Meta.Status)
 			}
 			return execSSH(ssh.Argv(
-				s.KeyPath(), s.KnownHostsPath(), "root", s.Meta.IP))
+				s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, s.Meta.IP))
 		},
 	}
 }

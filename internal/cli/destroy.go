@@ -77,13 +77,19 @@ session dir. Pass --yes to skip the confirmation.`,
 			if err != nil {
 				return err
 			}
+			vmName := s.Meta.Roles["vm"]
+			vm, ok := vmByName(vmName)
+			if !ok {
+				return fmt.Errorf("session %s uses unknown provider %q",
+					s.Meta.Slug, vmName)
+			}
 			cache, err := terraform.PluginCacheDir()
 			if err != nil {
 				return err
 			}
 			runner := &terraform.Runner{
 				Bin: bin, Dir: s.TerraformDir(),
-				Env:     terraform.RunEnv(cfg.Token(), cache),
+				Env:     terraform.RunEnv(vm.EnvCreds(cfg), cache),
 				LogsDir: s.LogsDir(), Out: out,
 			}
 

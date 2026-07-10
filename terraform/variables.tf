@@ -3,7 +3,7 @@ variable "cloud_provider" {
   description = "Provider serving the vm role."
 
   validation {
-    condition     = contains(["digitalocean"], var.cloud_provider)
+    condition     = contains(["digitalocean", "hetzner", "aws"], var.cloud_provider)
     error_message = "Unsupported vm provider."
   }
 }

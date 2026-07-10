@@ -25,3 +25,24 @@ module "digitalocean" {
   slug           = var.slug
   ssh_public_key = tls_private_key.ssh.public_key_openssh
 }
+
+module "hetzner" {
+  source = "./hetzner"
+  count  = var.cloud_provider == "hetzner" ? 1 : 0
+
+  region         = var.region
+  size           = var.size
+  image          = var.image
+  slug           = var.slug
+  ssh_public_key = tls_private_key.ssh.public_key_openssh
+}
+
+module "aws" {
+  source = "./aws"
+  count  = var.cloud_provider == "aws" ? 1 : 0
+
+  size           = var.size
+  image          = var.image
+  slug           = var.slug
+  ssh_public_key = tls_private_key.ssh.public_key_openssh
+}

@@ -10,19 +10,16 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
-	"github.com/openbuzz/interview-labs/internal/digitalocean"
+	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	"github.com/openbuzz/interview-labs/internal/terraform"
 	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
-// validateDOToken is a seam for tests; production hits the DigitalOcean API.
-var validateDOToken = func(ctx context.Context, token string) error {
-	c, err := digitalocean.NewClient(token)
-	if err != nil {
-		return err
-	}
-	return digitalocean.ValidateToken(ctx, c)
+// validateCreds is a seam for tests; production hits the provider API.
+var validateCreds = func(ctx context.Context, vm provider.VM,
+	cfg config.Config) error {
+	return vm.ValidateCreds(ctx, cfg)
 }
 
 // lookupSSH is a seam for tests; production checks PATH.
@@ -77,20 +74,36 @@ client, XDG config/state/cache directories, and stored credentials.`,
 				p(ui.RowFail("state dirs", "cannot create XDG directories"))
 			}
 
-			// credentials
+			// credentials — one row per registered VM provider
 			cfg, err := config.Load()
 			if err != nil {
 				failed = true
 				p(ui.RowFail("credentials", "config unreadable: "+err.Error()))
-			} else if token := cfg.Token(); token == "" {
-				p(ui.RowWarn("credentials", "no DigitalOcean token configured"))
-				p("  " + ui.Faint.Render("run interview init to configure one"))
-			} else if err := validateDOToken(cmd.Context(), token); err != nil {
-				failed = true
-				p(ui.RowFail("credentials", err.Error()))
-				p("  " + ui.Faint.Render("run interview init to replace the token"))
 			} else {
-				p(ui.RowOK("credentials", "DigitalOcean token valid"))
+				anyConfigured := false
+				for _, pr := range provider.ByRole(providers, provider.RoleVM) {
+					vm, ok := pr.(provider.VM)
+					if !ok {
+						continue
+					}
+					if !vm.Configured(cfg) {
+						p(ui.RowWarn(pr.Label(), "not configured"))
+						continue
+					}
+
+					anyConfigured = true
+					if err := validateCreds(cmd.Context(), vm, cfg); err != nil {
+						failed = true
+						p(ui.RowFail(pr.Label(), err.Error()))
+						p("  " + ui.Faint.Render(
+							"run interview init to replace the credentials"))
+					} else {
+						p(ui.RowOK(pr.Label(), "credentials valid"))
+					}
+				}
+				if !anyConfigured {
+					p("  " + ui.Faint.Render("run interview init to configure a provider"))
+				}
 			}
 
 			if failed {

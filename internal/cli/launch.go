@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
-	"github.com/openbuzz/interview-labs/internal/digitalocean"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	"github.com/openbuzz/interview-labs/internal/ssh"
@@ -24,27 +23,19 @@ import (
 // sshDialPort is a seam: production 22, tests point it at a local server.
 var sshDialPort = 22
 
-func sizeLabel(s digitalocean.Size) string {
-	return fmt.Sprintf("%s  %dvcpu %dMB %dGB  $%.3f/hr ($%.0f/mo)",
-		s.Slug, s.VCPUs, s.Memory, s.Disk, s.PriceHourly, s.PriceMonthly)
-}
-
-// pickRegionSize is a seam: production drives huh selects over live godo lists.
-var pickRegionSize = func(ctx context.Context, token,
-	preRegion, preInstance string) (string, string, error) {
-	client, err := digitalocean.NewClient(token)
-	if err != nil {
-		return "", "", err
-	}
-	regions, err := digitalocean.Regions(ctx, client)
+// pickRegionSize is a seam: production drives huh selects over the
+// provider's live region and size lists.
+var pickRegionSize = func(ctx context.Context, vm provider.VM,
+	cfg config.Config) (string, string, error) {
+	regions, err := vm.Regions(ctx, cfg)
 	if err != nil {
 		return "", "", err
 	}
 
-	region := preRegion
+	region, size := vm.Defaults(cfg)
 	regionOpts := make([]huh.Option[string], 0, len(regions))
 	for _, r := range regions {
-		regionOpts = append(regionOpts, huh.NewOption(r.Slug+"  "+r.Name, r.Slug))
+		regionOpts = append(regionOpts, huh.NewOption(r.Label, r.Slug))
 	}
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Region").Options(regionOpts...).Value(&region),
@@ -52,18 +43,16 @@ var pickRegionSize = func(ctx context.Context, token,
 		return "", "", err
 	}
 
-	sizes, err := digitalocean.SizesFor(ctx, client, region)
+	sizes, err := vm.Sizes(ctx, cfg, region)
 	if err != nil {
 		return "", "", err
 	}
-	size := preInstance
 	sizeOpts := make([]huh.Option[string], 0, len(sizes))
 	for _, s := range sizes {
-		sizeOpts = append(sizeOpts, huh.NewOption(sizeLabel(s), s.Slug))
+		sizeOpts = append(sizeOpts, huh.NewOption(s.Label, s.Slug))
 	}
 	if err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Size (cheapest first)").
-			Options(sizeOpts...).Value(&size),
+		huh.NewSelect[string]().Title("Size").Options(sizeOpts...).Value(&size),
 	)).WithTheme(ui.Theme()).Run(); err != nil {
 		return "", "", err
 	}
@@ -95,7 +84,7 @@ func newLaunchCmd() *cobra.Command {
 	var region, size string
 	cmd := &cobra.Command{
 		Use:   "launch",
-		Short: "deploy a session VM on DigitalOcean",
+		Short: "deploy a session VM",
 		Long: `Deploy a fresh interview VM.
 
 Steps: pick a configured provider, a region and an instance size (hourly
@@ -126,22 +115,22 @@ The VM bills hourly until "interview destroy".`,
 				return fmt.Errorf("no providers configured")
 			}
 
-			vm := configured[0]
+			vmSel := configured[0]
 			if isTTY() {
-				vm, err = pickVMProvider(configured, cfg.Roles.VM)
+				vmSel, err = pickVMProvider(configured, cfg.Roles.VM)
 				if err != nil {
 					return err
 				}
+			}
+			vm, ok := vmSel.(provider.VM)
+			if !ok {
+				return fmt.Errorf("provider %s cannot host a session VM", vmSel.Name())
 			}
 			cfg.Roles.VM = vm.Name()
 			if err := cfg.Write(); err != nil {
 				return err
 			}
 
-			token := cfg.Token()
-			if token == "" {
-				return fmt.Errorf("no DigitalOcean token — run interview init first")
-			}
 			bin, err := terraform.Find()
 			if err != nil {
 				return err
@@ -149,21 +138,20 @@ The VM bills hourly until "interview destroy".`,
 
 			if region == "" || size == "" {
 				if !isTTY() {
-					return usageError("launch needs --region and --size when not on a terminal")
+					return usageError(
+						"launch needs --region and --size when not on a terminal")
 				}
-				region, size, err = pickRegionSize(cmd.Context(), token,
-					cfg.Providers.DigitalOcean.Region, cfg.Providers.DigitalOcean.Instance)
+				region, size, err = pickRegionSize(cmd.Context(), vm, cfg)
 				if err != nil {
 					return err
 				}
-				cfg.Providers.DigitalOcean.Region = region
-				cfg.Providers.DigitalOcean.Instance = size
+				vm.SetDefaults(&cfg, region, size)
 				if err := cfg.Write(); err != nil {
 					return err
 				}
 			}
 
-			s, err := session.New(region, size, digitalocean.Image,
+			s, err := session.New(region, size, vm.Image(), vm.SSHUser(),
 				map[string]string{"vm": vm.Name()},
 				session.TerraformInfo{Binary: bin.Name, Version: bin.Version})
 			if err != nil {
@@ -175,7 +163,7 @@ The VM bills hourly until "interview destroy".`,
 			}
 			defer release()
 
-			if err := runLaunch(cmd.Context(), out, token, bin, s); err != nil {
+			if err := runLaunch(cmd.Context(), out, vm.EnvCreds(cfg), bin, s); err != nil {
 				s.SetStatus(session.StatusFailed)
 				fmt.Fprintf(out, "\n%s\n", ui.RowFail("launch "+s.Meta.Phase, err.Error()))
 				fmt.Fprintf(out, "%s\n", ui.Faint.Render("logs: "+s.LogsDir()))
@@ -185,20 +173,22 @@ The VM bills hourly until "interview destroy".`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&region, "region", "", "DigitalOcean region slug")
-	cmd.Flags().StringVar(&size, "size", "", "DigitalOcean size slug")
+	cmd.Flags().StringVar(&region, "region", "",
+		"provider region slug (e.g. fra1, fsn1, eu-central-1)")
+	cmd.Flags().StringVar(&size, "size", "",
+		"provider size slug (e.g. s-2vcpu-2gb, cx22, m7i.xlarge)")
 	return cmd
 }
 
 func runLaunch(ctx context.Context, out io.Writer,
-	token string, bin terraform.Binary, s *session.Session) error {
+	creds map[string]string, bin terraform.Binary, s *session.Session) error {
 	cache, err := terraform.PluginCacheDir()
 	if err != nil {
 		return err
 	}
 	runner := &terraform.Runner{
 		Bin: bin, Dir: s.TerraformDir(),
-		Env: terraform.RunEnv(token, cache), LogsDir: s.LogsDir(), Out: out,
+		Env: terraform.RunEnv(creds, cache), LogsDir: s.LogsDir(), Out: out,
 	}
 
 	if err := s.SetPhase("stage"); err != nil {
@@ -242,7 +232,7 @@ func runLaunch(ctx context.Context, out io.Writer,
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	addr := net.JoinHostPort(outputs.IP, strconv.Itoa(sshDialPort))
-	client, err := ssh.Dial(dialCtx, addr, "root", s.KeyPath(), s.KnownHostsPath())
+	client, err := ssh.Dial(dialCtx, addr, s.Meta.SSHUser, s.KeyPath(), s.KnownHostsPath())
 	if err != nil {
 		return err
 	}
@@ -264,7 +254,7 @@ func runLaunch(ctx context.Context, out io.Writer,
 		return err
 	}
 	sshLine := strings.Join(
-		ssh.Argv(s.KeyPath(), s.KnownHostsPath(), "root", outputs.IP), " ")
+		ssh.Argv(s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, outputs.IP), " ")
 	fmt.Fprintf(out, "\n%s\n", ui.RowOK(s.Meta.Slug, outputs.IP))
 	fmt.Fprintf(out, "%s\n", ui.Faint.Render(sshLine))
 	fmt.Fprintln(out, ui.Next(

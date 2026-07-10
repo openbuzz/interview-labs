@@ -12,6 +12,9 @@ import (
 )
 
 func TestInitNonTTYExits2(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	old := isTTY
 	isTTY = func() bool { return false }
 	t.Cleanup(func() { isTTY = old })
@@ -45,6 +48,8 @@ func (f *fakeProvider) Configure(ctx context.Context, cfg *config.Config) error 
 
 func TestInitConfiguresProviderThenExits(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	swapTTY(t, true)
 	fp := &fakeProvider{name: "digitalocean", label: "DigitalOcean",
 		configure: func(_ context.Context, cfg *config.Config) error {
@@ -87,6 +92,8 @@ func TestInitConfiguresProviderThenExits(t *testing.T) {
 
 func TestInitConfigureCancelReturnsToMenu(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	swapTTY(t, true)
 	fp := &fakeProvider{name: "digitalocean", label: "DigitalOcean",
 		configure: func(context.Context, *config.Config) error {

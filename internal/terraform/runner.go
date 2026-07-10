@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 )
@@ -44,10 +45,21 @@ func PluginCacheDir() (string, error) {
 	return dir, nil
 }
 
-// RunEnv builds the child env: parent + token + plugin cache + automation flag.
-func RunEnv(token, pluginCache string) []string {
-	return append(os.Environ(),
-		"DIGITALOCEAN_TOKEN="+token,
+// RunEnv builds the child env: parent + provider creds + plugin cache +
+// automation flag. Creds append in sorted key order so runs are
+// reproducible.
+func RunEnv(creds map[string]string, pluginCache string) []string {
+	keys := make([]string, 0, len(creds))
+	for k := range creds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	env := os.Environ()
+	for _, k := range keys {
+		env = append(env, k+"="+creds[k])
+	}
+	return append(env,
 		"TF_PLUGIN_CACHE_DIR="+pluginCache,
 		"TF_IN_AUTOMATION=1",
 	)

@@ -8,7 +8,9 @@ import (
 )
 
 func TestListEmpty(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	out, code := runCmd(t, "list")
 	if code != 0 {
 		t.Fatalf("exit = %d", code)
@@ -19,8 +21,10 @@ func TestListEmpty(t *testing.T) {
 }
 
 func TestListShowsSessions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64",
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64", "root",
 		map[string]string{"vm": "digitalocean"},
 		session.TerraformInfo{Binary: "terraform", Version: "1.9.5"})
 	if err != nil {
@@ -41,8 +45,10 @@ func TestListShowsSessions(t *testing.T) {
 }
 
 func TestListShowsVMProvider(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	s, err := session.New("fra1", "s-1vcpu-1gb", "img",
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	s, err := session.New("fra1", "s-1vcpu-1gb", "img", "root",
 		map[string]string{"vm": "digitalocean"}, session.TerraformInfo{})
 	if err != nil {
 		t.Fatal(err)
