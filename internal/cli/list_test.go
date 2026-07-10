@@ -21,6 +21,7 @@ func TestListEmpty(t *testing.T) {
 func TestListShowsSessions(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64",
+		map[string]string{"vm": "digitalocean"},
 		session.TerraformInfo{Binary: "terraform", Version: "1.9.5"})
 	if err != nil {
 		t.Fatal(err)
@@ -36,5 +37,24 @@ func TestListShowsSessions(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestListShowsVMProvider(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s, err := session.New("fra1", "s-1vcpu-1gb", "img",
+		map[string]string{"vm": "digitalocean"}, session.TerraformInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s
+
+	out, code := runCmd(t, "list")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	if !strings.Contains(out, "PROVIDER") || !strings.Contains(out, "digitalocean") {
+		t.Fatalf("list missing provider column:\n%s", out)
 	}
 }

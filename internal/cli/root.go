@@ -11,8 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/openbuzz/interview-labs/internal/digitalocean"
+	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/ui"
 )
+
+// providers is the registry, in menu order.
+var providers = []provider.Provider{digitalocean.New()}
 
 type usageErr struct{ msg string }
 
@@ -28,8 +33,19 @@ func IsUsage(err error) bool {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "interview",
-		Short:         "disposable interview lab VMs",
+		Use:   "interview",
+		Short: "disposable interview lab VMs",
+		Long: `interview runs one disposable cloud VM per interview session.
+
+Commands:
+  doctor   Check required tools, directories and credentials.
+  init     Configure cloud provider credentials (guided, re-runnable).
+  launch   Deploy a session VM: pick provider, region and instance size.
+  list     Show sessions with provider, age and status.
+  ssh      Open a shell on a session VM.
+  destroy  Tear a session down and archive its logs.
+
+Start with "interview doctor", then "interview init".`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

@@ -29,7 +29,12 @@ func newDestroyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "destroy [slug]",
 		Short: "destroy a session VM",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Tear a session down.
+
+Runs terraform destroy with the binary that applied the session, then
+archives metadata and logs under the XDG state directory and removes the
+session dir. Pass --yes to skip the confirmation.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			ref := ""

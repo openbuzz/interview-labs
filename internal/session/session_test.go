@@ -12,7 +12,8 @@ func testTF() TerraformInfo { return TerraformInfo{Binary: "terraform", Version:
 
 func newTestSession(t *testing.T) *Session {
 	t.Helper()
-	s, err := New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64", testTF())
+	s, err := New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64",
+		map[string]string{"vm": "digitalocean"}, testTF())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestNewCreatesLayout(t *testing.T) {
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("metadata perm = %o, want 600", fi.Mode().Perm())
 	}
-	if s.Meta.Status != StatusLaunching || s.Meta.Schema != 1 {
+	if s.Meta.Status != StatusLaunching || s.Meta.Schema != 2 {
 		t.Fatalf("meta = %+v", s.Meta)
 	}
 	if !strings.Contains(s.Meta.Slug, "-") || len(s.Meta.Slug) < 6 {
@@ -138,5 +139,49 @@ func TestAge(t *testing.T) {
 	s.Meta.CreatedAt = time.Now().UTC().Add(-90 * time.Minute)
 	if got := s.Age(time.Now().UTC()); got < 89*time.Minute || got > 91*time.Minute {
 		t.Fatalf("Age() = %v", got)
+	}
+}
+
+func TestNewRecordsRoles(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s, err := New("fra1", "s-1vcpu-1gb", "img",
+		map[string]string{"vm": "digitalocean"}, TerraformInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Meta.Schema != 2 {
+		t.Fatalf("schema = %d, want 2", s.Meta.Schema)
+	}
+	if s.Meta.Roles["vm"] != "digitalocean" {
+		t.Fatalf("roles = %v", s.Meta.Roles)
+	}
+
+	got, err := Get(s.Meta.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta.Roles["vm"] != "digitalocean" {
+		t.Fatalf("reloaded roles = %v", got.Meta.Roles)
+	}
+}
+
+func TestGetDefaultsSchema1Roles(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s, err := New("fra1", "s-1vcpu-1gb", "img",
+		map[string]string{"vm": "digitalocean"}, TerraformInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"schema":1,"slug":"` + s.Meta.Slug + `","status":"ready","phase":"summary"}`
+	if err := os.WriteFile(s.MetadataPath(), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Get(s.Meta.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta.Roles["vm"] != "digitalocean" {
+		t.Fatalf("schema-1 fallback roles = %v", got.Meta.Roles)
 	}
 }

@@ -7,25 +7,12 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	cryptossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
-
-// WriteKeyFiles writes key (0600) and key.pub (0644) into sshDir.
-func WriteKeyFiles(sshDir, privateKeyPEM, publicKey string) error {
-	if err := os.MkdirAll(sshDir, 0o700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(sshDir, "key"),
-		[]byte(privateKeyPEM), 0o600); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(sshDir, "key.pub"), []byte(publicKey), 0o644)
-}
 
 // Client is an established session connection.
 type Client struct {

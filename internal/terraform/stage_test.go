@@ -26,7 +26,9 @@ func TestStageCopiesTree(t *testing.T) {
 
 func TestWriteTfvars(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteTfvars(dir, "fra1", "s-1vcpu-1gb", Image, "calm-otter-7f3k"); err != nil {
+	err := WriteTfvars(dir, "digitalocean", "fra1", "s-1vcpu-1gb",
+		"ubuntu-26-04-x64", "calm-otter", "/state/ssh")
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,21 +36,21 @@ func TestWriteTfvars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got map[string]string
-	if err := json.Unmarshal(data, &got); err != nil {
+	var vars map[string]string
+	if err := json.Unmarshal(data, &vars); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"region": "fra1", "size": "s-1vcpu-1gb",
-		"image": "ubuntu-26-04-x64", "slug": "calm-otter-7f3k",
+		"cloud_provider": "digitalocean", "region": "fra1", "size": "s-1vcpu-1gb",
+		"image": "ubuntu-26-04-x64", "slug": "calm-otter", "ssh_dir": "/state/ssh",
 	}
 	for k, v := range want {
-		if got[k] != v {
-			t.Fatalf("tfvars[%s] = %q, want %q", k, got[k], v)
+		if vars[k] != v {
+			t.Fatalf("tfvars[%s] = %q, want %q", k, vars[k], v)
 		}
 	}
-	if len(got) != len(want) {
-		t.Fatalf("tfvars has extra keys: %v", got)
+	if _, ok := vars["token"]; ok || len(vars) != len(want) {
+		t.Fatalf("unexpected tfvars keys: %v", vars)
 	}
 }
 

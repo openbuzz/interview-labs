@@ -10,9 +10,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DigitalOcean is the DigitalOcean provider configuration.
+type DigitalOcean struct {
+	Token    string `yaml:"token"`
+	Region   string `yaml:"region"`
+	Instance string `yaml:"instance"`
+}
+
+// Providers holds per-provider configuration.
+type Providers struct {
+	DigitalOcean DigitalOcean `yaml:"digitalocean"`
+}
+
+// Roles maps a role to the provider that fulfills it.
+type Roles struct {
+	VM string `yaml:"vm"`
+}
+
 // Config is the whole config.yaml.
 type Config struct {
-	DigitalOceanToken string `yaml:"digitalocean_token"`
+	Providers Providers `yaml:"providers"`
+	Roles     Roles     `yaml:"roles"`
 }
 
 // Path returns $XDG_CONFIG_HOME/interview/config.yaml (fallback ~/.config).
@@ -85,5 +103,5 @@ func (c Config) Token() string {
 	if t := os.Getenv("DIGITALOCEAN_TOKEN"); t != "" {
 		return t
 	}
-	return c.DigitalOceanToken
+	return c.Providers.DigitalOcean.Token
 }

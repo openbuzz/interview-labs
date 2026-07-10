@@ -86,11 +86,7 @@ func TestLogAppendsAcrossAttempts(t *testing.T) {
 
 func TestOutputsParse(t *testing.T) {
 	r, _ := fakeRunner(t)
-	outputs := `{
-	  "ip": {"value": "203.0.113.9", "sensitive": false},
-	  "ssh_private_key": {"value": "PRIVKEY", "sensitive": true},
-	  "ssh_public_key": {"value": "ssh-ed25519 AAA", "sensitive": false}
-	}`
+	outputs := `{"ip":{"value":"203.0.113.7"}}`
 	if err := os.WriteFile(filepath.Join(filepath.Dir(r.Bin.Path), "outputs.json"),
 		[]byte(outputs), 0o644); err != nil {
 		t.Fatal(err)
@@ -100,8 +96,7 @@ func TestOutputsParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.IP != "203.0.113.9" || got.SSHPrivateKey != "PRIVKEY" ||
-		got.SSHPublicKey != "ssh-ed25519 AAA" {
+	if got.IP != "203.0.113.7" {
 		t.Fatalf("Outputs() = %+v", got)
 	}
 }

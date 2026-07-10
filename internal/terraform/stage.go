@@ -9,9 +9,6 @@ import (
 	interviewlabs "github.com/openbuzz/interview-labs"
 )
 
-// Image is the droplet image every session boots.
-const Image = "ubuntu-26-04-x64"
-
 // Stage copies the embedded terraform tree into dst.
 func Stage(dst string) error {
 	src, err := fs.Sub(interviewlabs.InfraFS, "terraform")
@@ -35,12 +32,14 @@ func Stage(dst string) error {
 }
 
 // WriteTfvars writes terraform.tfvars.json (auto-loaded by tf).
-func WriteTfvars(dir, region, size, image, slug string) error {
+func WriteTfvars(dir, provider, region, size, image, slug, sshDir string) error {
 	vars := map[string]string{
-		"region": region,
-		"size":   size,
-		"image":  image,
-		"slug":   slug,
+		"cloud_provider": provider,
+		"region":         region,
+		"size":           size,
+		"image":          image,
+		"slug":           slug,
+		"ssh_dir":        sshDir,
 	}
 	data, err := json.MarshalIndent(vars, "", "  ")
 	if err != nil {

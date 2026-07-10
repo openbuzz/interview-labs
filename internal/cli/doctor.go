@@ -35,6 +35,8 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "check the tools and credentials interview needs",
+		Long: `Check the local environment: terraform or opentofu on PATH, the ssh
+client, XDG config/state/cache directories, and stored credentials.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			failed := false
 			p := func(s string) { fmt.Fprintln(cmd.OutOrStdout(), s) }

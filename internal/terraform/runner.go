@@ -24,9 +24,7 @@ type Runner struct {
 
 // Outputs are the root module's output values.
 type Outputs struct {
-	IP            string
-	SSHPrivateKey string
-	SSHPublicKey  string
+	IP string
 }
 
 // PluginCacheDir returns (and creates) the shared provider cache.
@@ -129,9 +127,5 @@ func (r *Runner) Outputs(ctx context.Context) (Outputs, error) {
 	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&parsed); err != nil {
 		return Outputs{}, err
 	}
-	return Outputs{
-		IP:            parsed["ip"].Value,
-		SSHPrivateKey: parsed["ssh_private_key"].Value,
-		SSHPublicKey:  parsed["ssh_public_key"].Value,
-	}, nil
+	return Outputs{IP: parsed["ip"].Value}, nil
 }

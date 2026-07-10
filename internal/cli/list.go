@@ -24,6 +24,10 @@ func newListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "list sessions",
+		Long: `List sessions with provider, region, IP, age and status.
+
+Reads session state from the XDG state directory; unreadable session
+dirs are skipped rather than failing the listing.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			all, err := session.List()
 			if err != nil {
@@ -37,11 +41,12 @@ func newListCmd() *cobra.Command {
 			}
 
 			fmt.Fprintln(out, ui.Faint.Render(fmt.Sprintf(
-				"%-24s %-8s %-16s %-8s %s", "SLUG", "REGION", "IP", "AGE", "STATUS")))
+				"%-24s %-13s %-8s %-16s %-8s %s",
+				"SLUG", "PROVIDER", "REGION", "IP", "AGE", "STATUS")))
 			now := time.Now().UTC()
 			for _, s := range all {
-				fmt.Fprintf(out, "%-24s %-8s %-16s %-8s %s\n",
-					s.Meta.Slug, s.Meta.Region, s.Meta.IP,
+				fmt.Fprintf(out, "%-24s %-13s %-8s %-16s %-8s %s\n",
+					s.Meta.Slug, s.Meta.Roles["vm"], s.Meta.Region, s.Meta.IP,
 					formatAge(s.Age(now)), s.Meta.Status)
 			}
 			return nil

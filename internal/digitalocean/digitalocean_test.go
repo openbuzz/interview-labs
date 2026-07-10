@@ -60,9 +60,9 @@ func TestSizesForRegionSorted(t *testing.T) {
 	c := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"sizes":[
 		  {"slug":"s-2vcpu-4gb","available":true,"regions":["fra1"],
-		   "price_monthly":24.0,"memory":4096,"vcpus":2,"disk":80},
+		   "price_monthly":24.0,"price_hourly":0.02976,"memory":4096,"vcpus":2,"disk":80},
 		  {"slug":"s-1vcpu-1gb","available":true,"regions":["fra1","nyc1"],
-		   "price_monthly":6.0,"memory":1024,"vcpus":1,"disk":25},
+		   "price_monthly":6.0,"price_hourly":0.00744,"memory":1024,"vcpus":1,"disk":25},
 		  {"slug":"s-1vcpu-2gb","available":true,"regions":["nyc1"],
 		   "price_monthly":12.0,"memory":2048,"vcpus":1,"disk":50},
 		  {"slug":"gone","available":false,"regions":["fra1"],
@@ -75,5 +75,14 @@ func TestSizesForRegionSorted(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Slug != "s-1vcpu-1gb" || got[1].Slug != "s-2vcpu-4gb" {
 		t.Fatalf("SizesFor() = %+v", got)
+	}
+	if got[0].PriceHourly != 0.00744 {
+		t.Fatalf("PriceHourly = %v, want 0.00744", got[0].PriceHourly)
+	}
+}
+
+func TestImageConstant(t *testing.T) {
+	if Image != "ubuntu-26-04-x64" {
+		t.Fatalf("Image = %q", Image)
 	}
 }

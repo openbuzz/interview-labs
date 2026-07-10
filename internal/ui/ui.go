@@ -22,20 +22,32 @@ const (
 	GlyphOK   = "●"
 	GlyphWarn = "▲"
 	GlyphFail = "✗"
+	GlyphTodo = "○"
 )
 
-const logoArt = `   __
-  |  |     interview-labs
- /    \    one disposable VM per interview
-/_◦__◦_\`
+const logoArt = `██╗███╗   ██╗████████╗███████╗██████╗ ██╗   ██╗██╗███████╗██╗    ██╗
+██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗██║   ██║██║██╔════╝██║    ██║
+██║██╔██╗ ██║   ██║   █████╗  ██████╔╝██║   ██║██║█████╗  ██║ █╗ ██║
+██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗╚██╗ ██╔╝██║██╔══╝  ██║███╗██║
+██║██║ ╚████║   ██║   ███████╗██║  ██║ ╚████╔╝ ██║███████╗╚███╔███╔╝
+╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝
 
-// Logo renders the wordmark for root help.
+                  ██╗      █████╗ ██████╗ ███████╗
+                  ██║     ██╔══██╗██╔══██╗██╔════╝
+                  ██║     ███████║██████╔╝███████╗
+                  ██║     ██╔══██║██╔══██╗╚════██║
+                  ███████╗██║  ██║██████╔╝███████║
+                  ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝`
+
+const logoTagline = "                   one disposable VM per interview"
+
+// Logo renders the wordmark: art in bold accent, faint centered tagline.
 func Logo() string {
 	lines := strings.Split(logoArt, "\n")
 	for i, l := range lines {
-		lines[i] = Accent.Render(l)
+		lines[i] = Accent.Bold(true).Render(l)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n") + "\n\n" + Faint.Render(logoTagline)
 }
 
 // Next renders the NEXT block: full interview commands, one per line.
@@ -60,6 +72,24 @@ func row(glyph string, style lipgloss.Style, name, detail string) string {
 func RowOK(name, detail string) string   { return row(GlyphOK, OK, name, detail) }
 func RowWarn(name, detail string) string { return row(GlyphWarn, Warn, name, detail) }
 func RowFail(name, detail string) string { return row(GlyphFail, Fail, name, detail) }
+
+// Box renders a rounded-border block: bold title, blank line, body lines.
+func Box(title string, style lipgloss.Style, lines ...string) string {
+	body := style.Bold(true).Render(title) + "\n\n" + strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(style.GetForeground()).
+		Padding(1, 2).
+		Render(body)
+}
+
+// Badge renders a provider's configured state glyph.
+func Badge(configured bool) string {
+	if configured {
+		return OK.Render(GlyphOK)
+	}
+	return Faint.Render(GlyphTodo)
+}
 
 // Theme is the huh theme on the same ANSI palette.
 func Theme() *huh.Theme {

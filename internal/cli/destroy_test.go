@@ -28,6 +28,7 @@ func destroySetup(t *testing.T) (*session.Session, string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin")
 
 	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64",
+		map[string]string{"vm": "digitalocean"},
 		session.TerraformInfo{Binary: "terraform", Version: "1.9.5"})
 	if err != nil {
 		t.Fatal(err)

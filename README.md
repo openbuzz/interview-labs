@@ -20,7 +20,7 @@ go install github.com/openbuzz/interview-labs/cmd/interview@latest
 
 ```sh
 interview doctor    # check tools, dirs, credentials
-interview init      # store and validate the DigitalOcean token
+interview init      # configure cloud providers
 interview launch    # pick region and size, deploy, prints Hello world from the VM
 interview list      # sessions with age and status
 interview ssh       # shell into a session VM
@@ -32,7 +32,19 @@ Non-interactive use: set `DIGITALOCEAN_TOKEN` and pass `--region`/`--size` to la
 
 ## State
 
-- config: `$XDG_CONFIG_HOME/interview/config.yaml` (0600)
+- config: `$XDG_CONFIG_HOME/interview/config.yaml` (0600):
+
+  ```yaml
+  providers:
+    digitalocean:
+      token: "dop_v1_..."
+      region: fra1
+      instance: s-1vcpu-1gb
+
+  roles:
+    vm: digitalocean
+  ```
+
 - sessions: `$XDG_STATE_HOME/interview/sessions/<slug>/` — terraform state, ssh key,
   logs; archived metadata+logs land in `archive/<slug>/` after destroy
 - provider cache: `$XDG_CACHE_HOME/interview/terraform/plugins/`

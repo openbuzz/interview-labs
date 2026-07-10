@@ -9,22 +9,6 @@ import (
 	"time"
 )
 
-func TestWriteKeyFilesPerms(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ssh")
-	if err := WriteKeyFiles(dir, "PRIVATE", "ssh-ed25519 AAA\n"); err != nil {
-		t.Fatal(err)
-	}
-	for f, want := range map[string]os.FileMode{"key": 0o600, "key.pub": 0o644} {
-		fi, err := os.Stat(filepath.Join(dir, f))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fi.Mode().Perm() != want {
-			t.Fatalf("%s perm = %o, want %o", f, fi.Mode().Perm(), want)
-		}
-	}
-}
-
 func TestDialRunAndPin(t *testing.T) {
 	addr, privPEM, _ := StartTestServer(t)
 	dir := t.TempDir()

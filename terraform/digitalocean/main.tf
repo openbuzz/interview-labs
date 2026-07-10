@@ -1,20 +1,20 @@
-resource "digitalocean_ssh_key" "session" {
-  name       = "il-${var.slug}-key"
+resource "digitalocean_ssh_key" "this" {
+  name       = "interview-labs-${var.slug}-key"
   public_key = var.ssh_public_key
 }
 
-resource "digitalocean_droplet" "session" {
-  name     = "il-${var.slug}-vm"
+resource "digitalocean_droplet" "this" {
+  name     = "interview-labs-${var.slug}-vm"
   region   = var.region
   size     = var.size
   image    = var.image
-  ssh_keys = [digitalocean_ssh_key.session.fingerprint]
+  ssh_keys = [digitalocean_ssh_key.this.fingerprint]
   tags     = ["interview-labs", "slug:${var.slug}"]
 }
 
-resource "digitalocean_firewall" "session" {
-  name        = "il-${var.slug}-fw"
-  droplet_ids = [digitalocean_droplet.session.id]
+resource "digitalocean_firewall" "this" {
+  name        = "interview-labs-${var.slug}-fw"
+  droplet_ids = [digitalocean_droplet.this.id]
 
   inbound_rule {
     protocol         = "tcp"

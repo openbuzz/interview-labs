@@ -29,16 +29,17 @@ type TerraformInfo struct {
 
 // Metadata is the metadata.json schema.
 type Metadata struct {
-	Schema    int           `json:"schema"`
-	Slug      string        `json:"slug"`
-	CreatedAt time.Time     `json:"created_at"`
-	Region    string        `json:"region"`
-	Size      string        `json:"size"`
-	Image     string        `json:"image"`
-	Terraform TerraformInfo `json:"terraform"`
-	IP        string        `json:"ip,omitempty"`
-	Status    string        `json:"status"`
-	Phase     string        `json:"phase"`
+	Schema    int               `json:"schema"`
+	Slug      string            `json:"slug"`
+	CreatedAt time.Time         `json:"created_at"`
+	Region    string            `json:"region"`
+	Size      string            `json:"size"`
+	Image     string            `json:"image"`
+	Roles     map[string]string `json:"roles"`
+	Terraform TerraformInfo     `json:"terraform"`
+	IP        string            `json:"ip,omitempty"`
+	Status    string            `json:"status"`
+	Phase     string            `json:"phase"`
 }
 
 // Session is one lab session on disk.
@@ -69,7 +70,8 @@ func exists(p string) bool {
 }
 
 // New mints a session: slug, directory layout, initial metadata.
-func New(region, size, image string, tf TerraformInfo) (*Session, error) {
+func New(region, size, image string, roles map[string]string,
+	tf TerraformInfo) (*Session, error) {
 	root, err := Root()
 	if err != nil {
 		return nil, err
@@ -86,12 +88,13 @@ func New(region, size, image string, tf TerraformInfo) (*Session, error) {
 	s := &Session{
 		Dir: dir,
 		Meta: Metadata{
-			Schema:    1,
+			Schema:    2,
 			Slug:      slug,
 			CreatedAt: time.Now().UTC(),
 			Region:    region,
 			Size:      size,
 			Image:     image,
+			Roles:     roles,
 			Terraform: tf,
 			Status:    StatusLaunching,
 			Phase:     "session",
@@ -154,6 +157,9 @@ func Get(slug string) (*Session, error) {
 	s := &Session{Dir: dir}
 	if err := json.Unmarshal(data, &s.Meta); err != nil {
 		return nil, fmt.Errorf("session %q: %w", slug, err)
+	}
+	if s.Meta.Roles == nil {
+		s.Meta.Roles = map[string]string{"vm": "digitalocean"}
 	}
 	return s, nil
 }

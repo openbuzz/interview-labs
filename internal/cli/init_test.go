@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/huh"
+
 	"github.com/openbuzz/interview-labs/internal/config"
+	"github.com/openbuzz/interview-labs/internal/provider"
 )
 
 func TestInitNonTTYExits2(t *testing.T) {
@@ -22,30 +25,93 @@ func TestInitNonTTYExits2(t *testing.T) {
 	}
 }
 
-func TestInitValidatesThenWrites(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	oldTTY, oldPrompt, oldValidate := isTTY, promptToken, validateDOToken
-	isTTY = func() bool { return true }
-	promptToken = func(validate func(string) error) (string, error) {
-		if err := validate("dop_v1_good"); err != nil {
-			t.Fatalf("validator rejected: %v", err)
-		}
-		return "dop_v1_good", nil
-	}
-	validateDOToken = func(ctx context.Context, token string) error { return nil }
-	t.Cleanup(func() { isTTY, promptToken, validateDOToken = oldTTY, oldPrompt, oldValidate })
+type fakeProvider struct {
+	name, label string
+	configured  bool
+	configure   func(ctx context.Context, cfg *config.Config) error
+}
 
+func (f *fakeProvider) Name() string           { return f.name }
+func (f *fakeProvider) Label() string          { return f.label }
+func (f *fakeProvider) Roles() []provider.Role { return []provider.Role{provider.RoleVM} }
+
+func (f *fakeProvider) Configured(cfg config.Config) bool {
+	return f.configured || cfg.Providers.DigitalOcean.Token != ""
+}
+
+func (f *fakeProvider) Configure(ctx context.Context, cfg *config.Config) error {
+	return f.configure(ctx, cfg)
+}
+
+func TestInitConfiguresProviderThenExits(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	swapTTY(t, true)
+	fp := &fakeProvider{name: "digitalocean", label: "DigitalOcean",
+		configure: func(_ context.Context, cfg *config.Config) error {
+			cfg.Providers.DigitalOcean.Token = "tok"
+			return nil
+		}}
+	oldProviders, oldPick := providers, pickInitAction
+	t.Cleanup(func() { providers, pickInitAction = oldProviders, oldPick })
+	providers = []provider.Provider{fp}
+	calls := 0
+	pickInitAction = func(all []provider.Provider,
+		cfg config.Config) (provider.Provider, error) {
+		calls++
+		if calls == 1 {
+			return all[0], nil
+		}
+		return nil, nil // Exit
+	}
+
+	// runCmd is the package's existing test runner: (string, int) exit code, not
+	// (string, error) — adapted from the brief's literal `out, err :=` snippet.
 	out, code := runCmd(t, "init")
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
-	c, err := config.Load()
-	if err != nil || c.DigitalOceanToken != "dop_v1_good" {
-		t.Fatalf("config after init = %+v, %v", c, err)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"cloud.digitalocean.com", "NEXT", "interview launch"} {
+	if cfg.Providers.DigitalOcean.Token != "tok" {
+		t.Fatal("configure result not persisted")
+	}
+	for _, want := range []string{"Setup", "DigitalOcean", "interview launch"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("init output missing %q:\n%s", want, out)
+			t.Fatalf("summary missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestInitConfigureCancelReturnsToMenu(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	swapTTY(t, true)
+	fp := &fakeProvider{name: "digitalocean", label: "DigitalOcean",
+		configure: func(context.Context, *config.Config) error {
+			return huh.ErrUserAborted
+		}}
+	oldProviders, oldPick := providers, pickInitAction
+	t.Cleanup(func() { providers, pickInitAction = oldProviders, oldPick })
+	providers = []provider.Provider{fp}
+	calls := 0
+	pickInitAction = func([]provider.Provider,
+		config.Config) (provider.Provider, error) {
+		calls++
+		if calls == 1 {
+			return fp, nil
+		}
+		return nil, nil
+	}
+
+	// runCmd returns (string, int); see the adaptation note above.
+	_, code := runCmd(t, "init")
+
+	if code != 0 {
+		t.Fatalf("cancelled configure bubbled up: exit %d", code)
+	}
+	if calls != 2 {
+		t.Fatalf("menu shown %d times, want 2", calls)
 	}
 }

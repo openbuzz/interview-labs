@@ -11,6 +11,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// Image is the droplet image every session boots.
+const Image = "ubuntu-26-04-x64"
+
 // NewClient builds a godo client (opts allow a test base URL).
 func NewClient(token string, opts ...godo.ClientOpt) (*godo.Client, error) {
 	if len(opts) == 0 {
@@ -41,6 +44,7 @@ type Region struct {
 // Size is a selectable droplet size.
 type Size struct {
 	Slug         string
+	PriceHourly  float64
 	PriceMonthly float64
 	Memory       int
 	VCPUs        int
@@ -77,6 +81,7 @@ func SizesFor(ctx context.Context, c *godo.Client, region string) ([]Size, error
 		}
 		out = append(out, Size{
 			Slug:         s.Slug,
+			PriceHourly:  s.PriceHourly,
 			PriceMonthly: s.PriceMonthly,
 			Memory:       s.Memory,
 			VCPUs:        s.Vcpus,

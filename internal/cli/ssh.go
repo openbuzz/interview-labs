@@ -55,7 +55,12 @@ func newSSHCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh [slug]",
 		Short: "open a shell on a session VM",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Open an interactive shell on a session VM.
+
+Hands the terminal to the host ssh binary with the session's key and its
+pinned host key (per-session known_hosts). With several sessions, pass a
+slug or pick one from the menu.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := ""
 			if len(args) == 1 {
