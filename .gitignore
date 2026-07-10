@@ -1,0 +1,3 @@
+/interview
+/terraform/.terraform/
+/terraform/*.tfstate*
