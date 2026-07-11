@@ -1,0 +1,13 @@
+# Scoped trivy suppressions. DS-0026 is an instruction-absence check that cannot
+# bind to an inline comment (trivy ignores attach to a line; a missing HEALTHCHECK
+# has none), so it lives here, path-scoped to the three child-layer Dockerfiles.
+misconfigurations:
+  - id: AVD-DS-0026
+    paths:
+      - images/vscode/layers/backend/Dockerfile
+      - images/vscode/layers/devops/Dockerfile
+      - images/vscode/layers/ai/Dockerfile
+    statement: >-
+      Child layers build FROM the base image via bake named contexts and inherit
+      its HEALTHCHECK at runtime; trivy's per-file static check cannot see that
+      inheritance.

@@ -1,0 +1,9 @@
+{
+  "hasCompletedOnboarding": true,
+  "hasTrustDialogAccepted": true,
+  "theme": "dark",
+  "model": "anthropic/claude-sonnet-5",
+  "projects": {
+    "/home/user/workspace": { "hasTrustDialogAccepted": true }
+  }
+}

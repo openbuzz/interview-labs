@@ -1,0 +1,6 @@
+ignored:
+  # DL3008: unpinned apt versions — the FROM tag pins the base; pinning apt would break rebuilds.
+  - DL3008
+
+  # DL3006: untagged image — `FROM parent` is a bake build context, not a registry image.
+  - DL3006

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+# Install every registered code-server extension as the current user, then
+# remove the manifest (created by root during register). No-op if nothing
+# was registered.
+
+set -e -u -o pipefail
+
+readonly EXTENSIONS_FILE="/var/run/code-server/extensions.list"
+
+[[ -f "${EXTENSIONS_FILE}" ]] || exit 0
+
+while read -r ext; do
+  [[ -z "${ext}" || "${ext}" == \#* ]] && continue
+  code-server --install-extension "${ext}" ||
+    printf 'warning: extension %s unavailable\n' "${ext}" >&2
+done <"${EXTENSIONS_FILE}"
+
+rm -f "${EXTENSIONS_FILE}"

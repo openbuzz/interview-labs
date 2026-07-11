@@ -1,0 +1,5 @@
+[tools]
+go = "1.26.4"
+"go:golang.org/x/tools/gopls"           = "0.22.0"
+"go:github.com/go-delve/delve/cmd/dlv"  = "1.27.0"
+"go:honnef.co/go/tools/cmd/staticcheck" = "0.7.0"

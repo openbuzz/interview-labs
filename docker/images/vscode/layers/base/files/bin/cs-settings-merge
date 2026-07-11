@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Deep-merge a JSON settings fragment into the user's code-server settings.
+# Truncate-in-place keeps the file owned by user (mv/cp would re-own it root).
+
+set -e -u -o pipefail
+
+readonly USER_SETTINGS="/home/user/.local/share/code-server/User/settings.json"
+
+fragment="${1}"
+[[ -f "${fragment}" ]] || exit 0
+
+tmp="$(mktemp)"
+if jq -s '.[0] * .[1]' "${USER_SETTINGS}" "${fragment}" >"${tmp}"; then
+  cat "${tmp}" >"${USER_SETTINGS}"
+else
+  rm -f "${tmp}"
+  printf 'error: failed to merge %s into settings\n' "${fragment}" >&2
+  exit 1
+fi
+rm -f "${tmp}"

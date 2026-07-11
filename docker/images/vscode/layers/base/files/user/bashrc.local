@@ -1,0 +1,6 @@
+# Interview-labs shell defaults, sourced from ~/.bashrc.
+export EDITOR=vim
+export HISTCONTROL=ignoreboth
+
+# Prompt: green user@interview + blue cwd; \[ \] wrap non-printing escapes for width.
+export PS1='\[\e[32m\]\u@interview\[\e[0m\]:\[\e[34m\]\w\[\e[0m\]\$ '

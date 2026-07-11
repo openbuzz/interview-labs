@@ -1,0 +1,3 @@
+ignored:
+  # DL3059: consecutive RUN — install -d must follow go build as its own step.
+  - DL3059

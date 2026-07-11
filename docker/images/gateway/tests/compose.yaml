@@ -1,0 +1,47 @@
+name: interview-labs-gateway-test
+
+# Shared fixture login password, referenced by every gateway service below.
+x-gateway-password: &gateway_password openbuzz
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      GATEWAY_PASSWORD: *gateway_password
+      GATEWAY_IDE_UPSTREAM: http://app:8081
+      GATEWAY_TERM_UPSTREAM: http://app:8082
+      GATEWAY_LOG_LEVEL: debug
+      GATEWAY_LANDING_PAGE: /landing.html
+    volumes:
+      - ./landing.html:/landing.html:ro
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on:
+      - app
+
+  gateway-tls:
+    profiles: ["tls"]
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      GATEWAY_PASSWORD: *gateway_password
+      GATEWAY_IDE_UPSTREAM: http://app:8081
+      GATEWAY_TERM_UPSTREAM: http://app:8082
+      GATEWAY_LOG_LEVEL: debug
+      GATEWAY_TLS_CERT: /tls/cert.pem
+      GATEWAY_TLS_KEY: /tls/key.pem
+    ports:
+      - 127.0.0.1:8443:8080
+    volumes:
+      - ./tls:/tls:ro
+    depends_on:
+      - app
+
+  app:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/sim.conf:/etc/nginx/conf.d/sim.conf:ro
+      - ./nginx/html:/usr/share/nginx/sim:ro

@@ -18,7 +18,7 @@ tasks:
 
       echo "=> Checking host tools"
       missing=0
-      for tool in go task golangci-lint tflint trivy docker; do
+      for tool in bats docker go golangci-lint hadolint jq shellcheck shfmt task tflint trivy; do
         if command -v "${tool}" >/dev/null 2>&1; then
           echo "   ✓ ${tool}"
         else
@@ -39,11 +39,12 @@ tasks:
       echo "=> ✓ All host tools present"
 
   lint:
-    desc: Lint everything (go + terraform)
+    desc: Lint everything (go + terraform + docker stack)
     cmds:
       - task: go:lint
       - task: tf:fmt
       - task: tf:lint
+      - task: docker:lint
 
   build:
     desc: Build the interview binary
@@ -150,4 +151,83 @@ tasks:
 
       echo "=> Scanning terraform (trivy)"
       trivy config --exit-code 1 terraform
+      echo "=> Scanning docker stack (trivy)"
+      trivy config --exit-code 1 --ignorefile .trivyignore.yaml docker
       echo "=> ✓ trivy clean"
+
+  docker:lint:
+    desc: hadolint, shellcheck, shfmt and gateway go lint over docker/
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ docker lint failed"' ERR
+
+      echo "=> Linting docker stack"
+      (cd docker/images/gateway && hadolint Dockerfile)
+      (cd docker/images/vscode && hadolint layers/*/Dockerfile)
+      shellcheck docker/images/vscode/layers/base/files/entrypoint.sh \
+        docker/images/vscode/layers/base/files/bin/* \
+        docker/images/vscode/layers/*/setup.sh
+      shfmt -d docker/images/vscode/layers/base/files/entrypoint.sh \
+        docker/images/vscode/layers/base/files/bin/* \
+        docker/images/vscode/layers/*/setup.sh
+      (
+        cd docker/images/gateway
+        if [[ -n "$(gofmt -l .)" ]]; then
+          echo "   gofmt needs:"
+          gofmt -l .
+          exit 1
+        fi
+        go vet ./...
+        golangci-lint run ./...
+      )
+      echo "=> ✓ docker lint clean"
+
+  docker:build:
+    desc: Build the stack images via docker bake (dev loop; the VM runs the same files)
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ docker build failed"' ERR
+
+      echo "=> Building stack images via bake"
+      (cd docker && TAG=local docker buildx bake -f docker-bake.hcl local gateway \
+        --set '*.output=type=docker')
+      echo "=> ✓ stack images built"
+
+  docker:test:
+    desc: Gateway go tests + smoke, then per-layer bats against built images
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ docker tests failed"' ERR
+
+      echo "=> Testing gateway"
+      (cd docker/images/gateway && go test -cover ./... && bats tests/smoke.bats)
+
+      echo "=> Testing vscode layers"
+      targets="$(cd docker && TAG=local docker buildx bake -f docker-bake.hcl local --print \
+        | jq -r '.target | keys[]')"
+      if [[ -z "${targets}" ]]; then
+        echo "=> ✗ no bake targets discovered"
+        exit 1
+      fi
+      for t in ${targets}; do
+        echo "=> Running ${t} suite"
+        if [[ "${t}" == *-ai ]]; then
+          (cd docker/images/vscode &&
+            IMAGE="interview-labs-vscode:${t}-local" AI_PARENT="${t%-ai}" bats tests/ai/)
+        else
+          (cd docker/images/vscode &&
+            IMAGE="interview-labs-vscode:${t}-local" bats "tests/${t}/")
+        fi
+      done
+      echo "=> ✓ docker tests passed"
+
+  docker:e2e:
+    desc: Full-stack end-to-end — gateway auth + proxy against real code-server
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ docker e2e failed"' ERR
+
+      echo "=> Running stack e2e"
+      GATEWAY_PASSWORD="${GATEWAY_PASSWORD:-openbuzz}" VSCODE_PROFILE=devops \
+        bats tests/e2e.bats
+      echo "=> ✓ stack e2e passed"

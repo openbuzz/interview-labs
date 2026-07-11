@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Append code-server extension ids to the build-time install manifest.
+# Safe to call repeatedly; ids accumulate.
+
+set -e -u -o pipefail
+
+readonly EXTENSIONS_FILE="/var/run/code-server/extensions.list"
+
+[[ -f "${EXTENSIONS_FILE}" ]] || install -m 664 /dev/null "${EXTENSIONS_FILE}"
+
+for id in "$@"; do
+  printf '%s\n' "${id}" >>"${EXTENSIONS_FILE}"
+done

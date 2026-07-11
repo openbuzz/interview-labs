@@ -1,0 +1,11 @@
+model = "openai/gpt-5.3-codex"
+model_provider = "openrouter"
+
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+wire_api = "responses"
+
+[projects."/home/user/workspace"]
+trust_level = "trusted"
