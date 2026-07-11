@@ -1,5 +1,7 @@
 # interview-labs
 
+*Stop testing answers. Start testing work.*
+
 `interview` deploys a disposable cloud VM per interview session — DigitalOcean, Hetzner
 Cloud, or AWS — connects over SSH, and tears it down when you are done. Sessions run in
 parallel; state lives under your XDG directories and survives restarts.
@@ -24,6 +26,7 @@ interview doctor    # check tools, dirs, credentials
 interview init      # configure cloud providers
 interview launch    # pick region and size, deploy, prints Hello world from the VM
 interview list      # sessions with age and status
+interview info      # one session's details: IP, OS, ssh line
 interview ssh       # shell into a session VM
 interview destroy   # tear a session down
 ```

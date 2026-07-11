@@ -40,7 +40,7 @@ var pickInitAction = func(all []provider.Provider,
 	for _, p := range all {
 		opts = append(opts, huh.NewOption(menuRow(p, cfg), p.Name()))
 	}
-	opts = append(opts, huh.NewOption("Exit", exit))
+	opts = append(opts, huh.NewOption("exit", exit))
 
 	var sel string
 	err := ui.SelectForm("Select a provider to configure",
@@ -80,14 +80,14 @@ init any time to add or update providers.`,
 						"provider env vars (DIGITALOCEAN_TOKEN, HCLOUD_TOKEN, or "+
 						"AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)", p))
 			}
-			fmt.Fprintln(out, ui.Logo())
+			printLogoOnce(out)
 			printNarrowWarning(out)
 
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			if err := runInitLoop(cmd.Context(), &cfg); err != nil {
+			if err := runInitLoop(cmd.Context(), out, &cfg); err != nil {
 				return err
 			}
 
@@ -98,8 +98,12 @@ init any time to add or update providers.`,
 }
 
 // runInitLoop shows the provider menu until Exit, persisting after each configure.
-func runInitLoop(ctx context.Context, cfg *config.Config) error {
-	for {
+func runInitLoop(ctx context.Context, out io.Writer, cfg *config.Config) error {
+	for first := true; ; first = false {
+		if !first {
+			fmt.Fprintln(out)
+		}
+
 		p, err := pickInitAction(providers, *cfg)
 		if err != nil {
 			return err

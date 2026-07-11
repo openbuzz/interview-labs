@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 func TestExecuteUnknownCommandExitsUsage(t *testing.T) {
@@ -25,8 +30,8 @@ func TestRootHelpListsCommandsWithBanner(t *testing.T) {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
 	for _, want := range []string{
-		"██╗███╗", "one disposable VM per interview",
-		"doctor", "init", "launch", "list", "ssh", "destroy",
+		"██╗███╗", "Stop testing answers. Start testing work.",
+		"doctor", "init", "launch", "list", "info", "ssh", "destroy",
 		"interview doctor",
 	} {
 		if !strings.Contains(out, want) {
@@ -59,7 +64,7 @@ func TestBareRootNonTTYShowsHelp(t *testing.T) {
 	// root.Long is set, so Short never renders. Matching the substring
 	// TestRootHelpListsCommandsWithBanner already verifies for this same
 	// non-TTY help path instead.
-	if !strings.Contains(out, "one disposable VM per interview") {
+	if !strings.Contains(out, "Stop testing answers. Start testing work.") {
 		t.Fatalf("help not shown:\n%s", out)
 	}
 }
@@ -110,5 +115,41 @@ func TestBareRootTTYSubcommandErrorKeepsLooping(t *testing.T) {
 	}
 	if len(picks) != 0 {
 		t.Fatal("menu loop stopped after the failed action")
+	}
+}
+
+func TestMenuDispatchesLogoOnce(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	swapTTY(t, true)
+	t.Cleanup(ui.ResetLogoOnce)
+
+	picks := []string{"doctor", actionExit}
+	oldPick := pickMainAction
+	pickMainAction = func() (string, error) {
+		p := picks[0]
+		picks = picks[1:]
+		return p, nil
+	}
+	t.Cleanup(func() { pickMainAction = oldPick })
+
+	oldRun := runSubcommand
+	runSubcommand = func(_ context.Context, _ string, out, _ io.Writer) error {
+		if l := ui.LogoOnce(); l != "" {
+			fmt.Fprintln(out, l)
+		}
+		fmt.Fprintln(out, "dispatched")
+		return nil
+	}
+	t.Cleanup(func() { runSubcommand = oldRun })
+
+	out, code := runCmd(t)
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if got := strings.Count(out, "██╗███╗   ██╗████████╗"); got != 1 {
+		t.Fatalf("logo printed %d times, want 1\n%s", got, out)
+	}
+	if !strings.Contains(out, "dispatched") {
+		t.Fatal("subcommand did not run")
 	}
 }

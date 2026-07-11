@@ -12,11 +12,13 @@ import (
 
 	"github.com/openbuzz/interview-labs/internal/config"
 	"github.com/openbuzz/interview-labs/internal/provider"
+	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 // runCmd executes the root command with args, capturing stdout+stderr.
 func runCmd(t *testing.T, args ...string) (string, int) {
 	t.Helper()
+	ui.ResetLogoOnce()
 	root := newRootCmd()
 	var buf bytes.Buffer
 	root.SetOut(&buf)

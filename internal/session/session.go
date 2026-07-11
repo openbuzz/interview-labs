@@ -77,13 +77,10 @@ func New(region, size, image, sshUser string, roles map[string]string,
 	if err != nil {
 		return nil, err
 	}
-	slug, err := newSlug(func(s string) bool {
+	slug := newSlug(func(s string) bool {
 		return exists(filepath.Join(sessionsDir(root), s)) ||
 			exists(filepath.Join(archiveDir(root), s))
 	})
-	if err != nil {
-		return nil, err
-	}
 
 	dir := filepath.Join(sessionsDir(root), slug)
 	s := &Session{

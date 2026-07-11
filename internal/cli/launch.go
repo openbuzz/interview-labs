@@ -9,7 +9,6 @@ import (
 	"net"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -183,7 +182,7 @@ func runLaunchCmd(cmd *cobra.Command, region, size *string, yes bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.Logo())
+	printLogoOnce(out)
 	printNarrowWarning(out)
 
 	vm, err := selectVMProvider(out, &cfg)
@@ -387,7 +386,7 @@ func runLaunch(ctx context.Context, out io.Writer,
 	if err := greet(ctx, out, client, s); err != nil {
 		return err
 	}
-	return printLaunchSummary(out, s, ip)
+	return printLaunchSummary(out, s)
 }
 
 // newSessionRunner builds the terraform runner over the session dirs.
@@ -468,8 +467,8 @@ func greet(ctx context.Context, out io.Writer, client *ssh.Client,
 	return nil
 }
 
-// printLaunchSummary marks the session ready and prints the handover lines.
-func printLaunchSummary(out io.Writer, s *session.Session, ip string) error {
+// printLaunchSummary marks the session ready and prints the handover.
+func printLaunchSummary(out io.Writer, s *session.Session) error {
 	if err := s.SetPhase("summary"); err != nil {
 		return err
 	}
@@ -477,12 +476,8 @@ func printLaunchSummary(out io.Writer, s *session.Session, ip string) error {
 		return err
 	}
 
-	sshLine := strings.Join(
-		ssh.Argv(s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, ip), " ")
-	fmt.Fprintf(out, "\n%s\n", ui.RowOK(s.Meta.Slug, ip))
-	fmt.Fprintf(out, "%s\n", ui.Faint.Render(sshLine))
-	fmt.Fprintln(out, ui.Next(
-		"interview ssh "+s.Meta.Slug, "interview destroy "+s.Meta.Slug))
+	fmt.Fprintln(out)
+	printHandover(out, s)
 	return nil
 }
 

@@ -49,23 +49,33 @@ func printNarrowWarning(out io.Writer) {
 	}
 }
 
+// printLogoOnce surfaces the once-per-process logo block plus its trailing
+// blank line, so menu-dispatched subcommands never repeat the wordmark.
+func printLogoOnce(out io.Writer) {
+	if l := ui.LogoOnce(); l != "" {
+		fmt.Fprintln(out, l)
+		fmt.Fprintln(out)
+	}
+}
+
 const actionExit = "exit"
 
 // pickMainAction is a seam; production shows the main menu.
 var pickMainAction = func() (string, error) {
 	opts := []huh.Option[string]{
-		huh.NewOption("Doctor   — check tools and credentials", "doctor"),
-		huh.NewOption("Init     — configure cloud providers", "init"),
-		huh.NewOption("Launch   — deploy a session VM", "launch"),
-		huh.NewOption("List     — show sessions", "list"),
-		huh.NewOption("SSH      — open a shell on a session VM", "ssh"),
-		huh.NewOption("Destroy  — tear a session down", "destroy"),
-		huh.NewOption("Exit", actionExit),
+		huh.NewOption("doctor   — check tools and credentials", "doctor"),
+		huh.NewOption("init     — configure cloud providers", "init"),
+		huh.NewOption("launch   — deploy a session VM", "launch"),
+		huh.NewOption("list     — show sessions", "list"),
+		huh.NewOption("info     — show session details", "info"),
+		huh.NewOption("ssh      — open a shell on a session VM", "ssh"),
+		huh.NewOption("destroy  — tear a session down", "destroy"),
+		huh.NewOption("exit", actionExit),
 	}
 
 	var sel string
 	err := ui.SelectForm("What do you want to do?",
-		"One disposable VM per interview. Arrows move, Enter selects, ESC exits.",
+		"Arrows move, Enter selects, ESC exits.",
 		opts, &sel)
 	if errors.Is(err, huh.ErrUserAborted) {
 		return actionExit, nil // ESC behaves like Exit
@@ -106,6 +116,7 @@ Commands:
   init     Configure cloud provider credentials (guided, re-runnable).
   launch   Deploy a session VM: pick provider, region and instance size.
   list     Show sessions with provider, age and status.
+  info     Show one session's details.
   ssh      Open a shell on a session VM.
   destroy  Tear a session down and archive its logs.
 
@@ -117,8 +128,9 @@ Start with "interview doctor", then "interview init".`,
 			if !isTTY() {
 				return cmd.Help()
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), ui.Logo())
-			printNarrowWarning(cmd.OutOrStdout())
+			out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			printLogoOnce(out)
+			printNarrowWarning(out)
 
 			for {
 				action, err := pickMainAction()
@@ -128,10 +140,10 @@ Start with "interview doctor", then "interview init".`,
 				if action == actionExit {
 					return nil
 				}
-				out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
 				if err := runSubcommand(cmd.Context(), action, out, errW); err != nil {
 					fmt.Fprintf(errW, "error: %v\n", err)
 				}
+				fmt.Fprintln(out)
 			}
 		},
 	}
@@ -140,7 +152,7 @@ Start with "interview doctor", then "interview init".`,
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newLaunchCmd())
-	root.AddCommand(newListCmd(), newSSHCmd(), newDestroyCmd())
+	root.AddCommand(newListCmd(), newInfoCmd(), newSSHCmd(), newDestroyCmd())
 	root.SetHelpTemplate(ui.Logo() + "\n\n" + root.HelpTemplate())
 	return root
 }

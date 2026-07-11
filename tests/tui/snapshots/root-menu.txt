@@ -12,15 +12,17 @@
                     ███████╗██║  ██║██████╔╝███████║
                     ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝
 
-                     one disposable VM per interview
+               Stop testing answers. Start testing work.
+
 ┃ What do you want to do?
-┃ One disposable VM per interview. Arrows move, Enter selects, ESC exits.
-┃ > Doctor   — check tools and credentials
-┃   Init     — configure cloud providers
-┃   Launch   — deploy a session VM
-┃   List     — show sessions
-┃   SSH      — open a shell on a session VM
-┃   Destroy  — tear a session down
-┃   Exit
+┃ Arrows move, Enter selects, ESC exits.
+┃ > doctor   — check tools and credentials
+┃   init     — configure cloud providers
+┃   launch   — deploy a session VM
+┃   list     — show sessions
+┃   info     — show session details
+┃   ssh      — open a shell on a session VM
+┃   destroy  — tear a session down
+┃   exit
 
 ↑ up • ↓ down • / filter • enter submit

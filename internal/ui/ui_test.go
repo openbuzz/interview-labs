@@ -9,7 +9,7 @@ import (
 )
 
 func TestNextContainsCommands(t *testing.T) {
-	out := Next("interview launch", "interview destroy calm-otter-7f3k")
+	out := Next("interview launch", "interview destroy calm-otter")
 	if !strings.Contains(out, "NEXT") || !strings.Contains(out, "interview launch") {
 		t.Fatalf("Next() = %q", out)
 	}
@@ -29,7 +29,7 @@ func TestLogoArt(t *testing.T) {
 	if !strings.Contains(logo, "██╗███╗   ██╗████████╗") {
 		t.Fatalf("logo missing INTERVIEW block: %q", logo)
 	}
-	if !strings.Contains(logo, "one disposable VM per interview") {
+	if !strings.Contains(logo, "Stop testing answers. Start testing work.") {
 		t.Fatalf("logo missing tagline: %q", logo)
 	}
 	for _, line := range strings.Split(logo, "\n") {
@@ -127,6 +127,23 @@ func TestNarrowWarningSilentWhenWideOrNonTTY(t *testing.T) {
 	}
 }
 
+func TestLogoOnce(t *testing.T) {
+	ResetLogoOnce()
+	t.Cleanup(ResetLogoOnce)
+
+	if first := LogoOnce(); !strings.Contains(first, "██╗███╗   ██╗████████╗") {
+		t.Fatalf("first call missing art: %q", first)
+	}
+	if second := LogoOnce(); second != "" {
+		t.Fatalf("second call = %q, want empty", second)
+	}
+
+	ResetLogoOnce()
+	if again := LogoOnce(); again == "" {
+		t.Fatal("reset did not re-arm the logo")
+	}
+}
+
 func TestSizeLabelFormat(t *testing.T) {
 	cases := []struct {
 		in   provider.SizeInfo
@@ -158,6 +175,15 @@ func TestSizeLabelFormat(t *testing.T) {
 	for _, c := range cases {
 		if got := SizeLabel(c.in); got != c.want {
 			t.Fatalf("SizeLabel(%s):\n got %q\nwant %q", c.in.Slug, got, c.want)
+		}
+	}
+}
+
+func TestReceiptLine(t *testing.T) {
+	line := receiptLine("What do you want to do?", "doctor")
+	for _, want := range []string{"┃", "What do you want to do?", "→", "doctor"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("receipt missing %q: %q", want, line)
 		}
 	}
 }

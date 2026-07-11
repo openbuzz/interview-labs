@@ -12,12 +12,13 @@
                     ███████╗██║  ██║██████╔╝███████║
                     ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝
 
-                     one disposable VM per interview
+               Stop testing answers. Start testing work.
+
 ┃ Select a provider to configure
 ┃ Credentials are validated live and stored in the config file (0600). Re-run any time.
 ┃ > ○ DigitalOcean  — Cloud VM
 ┃   ○ Hetzner  — Cloud VM
 ┃   ○ AWS  — Cloud VM
-┃   Exit
+┃   exit
 
 ↑ up • ↓ down • / filter • enter submit

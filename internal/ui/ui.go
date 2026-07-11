@@ -47,7 +47,7 @@ const logoArt = `██╗███╗   ██╗████████╗█
                   ███████╗██║  ██║██████╔╝███████║
                   ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝`
 
-const logoTagline = "                   one disposable VM per interview"
+const logoTagline = "             Stop testing answers. Start testing work."
 
 // Logo renders the wordmark: art in bold accent, faint centered tagline.
 func Logo() string {
@@ -56,6 +56,24 @@ func Logo() string {
 		lines[i] = "  " + Accent.Bold(true).Render(l)
 	}
 	return strings.Join(lines, "\n") + "\n\n" + "  " + Faint.Render(logoTagline)
+}
+
+var logoShown bool
+
+// ResetLogoOnce re-arms the once-per-process logo print for tests.
+func ResetLogoOnce() { logoShown = false }
+
+// LogoOnce returns the logo block on the first call and "" afterwards, so
+// menu-dispatched subcommands never repeat the wordmark. The help template
+// keeps using Logo() directly: template construction runs on every
+// newRootCmd call and must not consume this guard.
+func LogoOnce() string {
+	if logoShown {
+		return ""
+	}
+
+	logoShown = true
+	return Logo()
 }
 
 // Next renders the NEXT block: full interview commands, one per line.
@@ -127,22 +145,45 @@ func FormKeyMap() *huh.KeyMap {
 	return km
 }
 
+// receiptLine formats the transcript line a completed form leaves behind.
+func receiptLine(title, choice string) string {
+	return Faint.Render("┃ " + title + " → " + choice)
+}
+
 // SelectForm runs one single-select with the house theme, keymap, title
-// and faint description. desc may be empty.
+// and faint description; a completed pick leaves a one-line receipt in
+// the transcript. desc may be empty.
 func SelectForm[T comparable](title, desc string,
 	opts []huh.Option[T], value *T) error {
-	return huh.NewForm(huh.NewGroup(
+	err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[T]().Title(title).Description(desc).
 			Options(opts...).Value(value),
 	)).WithTheme(Theme()).WithKeyMap(FormKeyMap()).Run()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(receiptLine(title, fmt.Sprint(*value)))
+	return nil
 }
 
 // ConfirmForm runs one confirm with the house theme and keymap; the
-// initial *value picks the focused button (true focuses Yes).
+// initial *value picks the focused button (true focuses Yes). A completed
+// confirm leaves a Yes/No receipt in the transcript.
 func ConfirmForm(title, desc string, value *bool) error {
-	return huh.NewForm(huh.NewGroup(
+	err := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(title).Description(desc).Value(value),
 	)).WithTheme(Theme()).WithKeyMap(FormKeyMap()).Run()
+	if err != nil {
+		return err
+	}
+
+	choice := "No"
+	if *value {
+		choice = "Yes"
+	}
+	fmt.Println(receiptLine(title, choice))
+	return nil
 }
 
 // Interactive is a seam: whether stdout can host live redraw (spinners).
