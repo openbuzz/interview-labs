@@ -1,0 +1,5 @@
+┃ Session
+┃ > brave-fox-a1b2  fra1  ready
+┃   calm-owl-c3d4  fra1  ready
+
+↑ up • ↓ down • / filter • enter submit

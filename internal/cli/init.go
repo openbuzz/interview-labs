@@ -46,7 +46,7 @@ var pickInitAction = func(all []provider.Provider,
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Select a provider to configure:").
 			Options(opts...).Value(&sel),
-	)).WithTheme(ui.Theme()).Run()
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run()
 	if errors.Is(err, huh.ErrUserAborted) {
 		return nil, nil // ESC or Ctrl-C at the menu behaves like Exit
 	}

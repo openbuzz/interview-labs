@@ -53,3 +53,19 @@ func TestBadge(t *testing.T) {
 		t.Fatalf("unconfigured badge = %q, want %q", got, GlyphTodo)
 	}
 }
+
+func TestFormKeyMapQuitAcceptsEscAndCtrlC(t *testing.T) {
+	keys := FormKeyMap().Quit.Keys()
+	for _, want := range []string{"esc", "ctrl+c"} {
+		found := false
+		for _, k := range keys {
+			if k == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Quit.Keys() = %v, want to contain %q", keys, want)
+		}
+	}
+}

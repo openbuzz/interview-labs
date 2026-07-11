@@ -60,7 +60,7 @@ var pickMainAction = func() (string, error) {
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("What do you want to do?").
 			Options(opts...).Value(&sel),
-	)).WithTheme(ui.Theme()).Run()
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run()
 	if errors.Is(err, huh.ErrUserAborted) {
 		return actionExit, nil // ESC behaves like Exit
 	}

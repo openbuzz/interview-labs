@@ -90,7 +90,7 @@ func huhPickSession(all []*session.Session) (*session.Session, error) {
 	var slug string
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Session").Options(opts...).Value(&slug),
-	)).WithTheme(ui.Theme()).Run(); err != nil {
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
 		return nil, err
 	}
 	return session.Get(slug)

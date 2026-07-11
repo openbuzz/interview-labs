@@ -39,7 +39,7 @@ var (
 				EchoMode(huh.EchoModePassword).
 				Validate(validate).
 				Value(&token),
-		)).WithTheme(ui.Theme())
+		)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap())
 		if err := form.Run(); err != nil {
 			return "", err
 		}

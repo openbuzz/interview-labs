@@ -104,5 +104,13 @@ func Theme() *huh.Theme {
 	return t
 }
 
+// FormKeyMap returns huh's default keymap with "esc" added to Quit, so ESC
+// aborts a form exactly like Ctrl+C (huh v1.0.0 binds Quit to ctrl+c only).
+func FormKeyMap() *huh.KeyMap {
+	km := huh.NewDefaultKeyMap()
+	km.Quit.SetKeys(append(km.Quit.Keys(), "esc")...)
+	return km
+}
+
 // Interactive is a seam: whether stdout can host live redraw (spinners).
 var Interactive = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }

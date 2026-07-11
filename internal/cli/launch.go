@@ -39,7 +39,7 @@ var pickRegionSize = func(ctx context.Context, vm provider.VM,
 	}
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Region").Options(regionOpts...).Value(&region),
-	)).WithTheme(ui.Theme()).Run(); err != nil {
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
 		return "", "", err
 	}
 
@@ -53,7 +53,7 @@ var pickRegionSize = func(ctx context.Context, vm provider.VM,
 	}
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Size").Options(sizeOpts...).Value(&size),
-	)).WithTheme(ui.Theme()).Run(); err != nil {
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
 		return "", "", err
 	}
 	return region, size, nil
@@ -69,7 +69,7 @@ var pickVMProvider = func(configured []provider.Provider,
 	sel := preselect
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Provider").Options(opts...).Value(&sel),
-	)).WithTheme(ui.Theme()).Run(); err != nil {
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
 		return nil, err
 	}
 	for _, p := range configured {

@@ -22,7 +22,7 @@ var confirmDestroy = func(s *session.Session) (bool, error) {
 			Title(fmt.Sprintf("Destroy %s (%s, %s)?",
 				s.Meta.Slug, s.Meta.IP, s.Meta.Region)).
 			Value(&ok),
-	)).WithTheme(ui.Theme()).Run()
+	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run()
 	return ok, err
 }
 

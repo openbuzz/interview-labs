@@ -54,6 +54,31 @@ tasks:
     cmds:
       - task: tf:scan
 
+  test:tui:
+    desc: TUI golden frames — tmux + bats in docker
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ tui tests failed"' ERR
+
+      echo "=> Building tui image"
+      docker build -f tests/tui/Dockerfile -t interview-labs-tui .
+      echo "=> Running tui tests"
+      docker run --rm --network=none interview-labs-tui
+      echo "=> ✓ tui tests passed"
+
+  test:tui:update:
+    desc: Regenerate the TUI goldens (rewrites tests/tui/snapshots)
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ tui golden update failed"' ERR
+
+      echo "=> Building tui image"
+      docker build -f tests/tui/Dockerfile -t interview-labs-tui .
+      echo "=> Updating goldens"
+      docker run --rm --network=none -e UPDATE_GOLDENS=1 \
+        -v "$(pwd)/tests/tui/snapshots:/src/tests/tui/snapshots" interview-labs-tui
+      echo "=> ✓ goldens updated"
+
   go:lint:
     desc: gofmt, go vet, golangci-lint over the module
     cmd: |

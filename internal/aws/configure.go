@@ -47,7 +47,7 @@ var (
 				EchoMode(huh.EchoModePassword).
 				Validate(notEmpty("secret access key")).
 				Value(&secret),
-		)).WithTheme(ui.Theme())
+		)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap())
 		if err := form.Run(); err != nil {
 			return "", "", err
 		}
