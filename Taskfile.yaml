@@ -19,12 +19,18 @@ tasks:
       echo "=> Checking host tools"
       missing=0
       for tool in go task golangci-lint tflint trivy docker; do
-        if ! command -v "${tool}" >/dev/null 2>&1; then
+        if command -v "${tool}" >/dev/null 2>&1; then
+          echo "   ✓ ${tool}"
+        else
           echo "   ✗ ${tool} not found"
           missing=1
         fi
       done
-      if ! command -v terraform >/dev/null 2>&1 && ! command -v tofu >/dev/null 2>&1; then
+      if command -v terraform >/dev/null 2>&1; then
+        echo "   ✓ terraform"
+      elif command -v tofu >/dev/null 2>&1; then
+        echo "   ✓ tofu"
+      else
         echo "   ✗ terraform or tofu not found"
         missing=1
       fi
@@ -103,6 +109,7 @@ tasks:
 
       echo "=> Building interview binary"
       go build -o bin/interview ./cmd/interview
+      echo "   binary: bin/interview"
       echo "=> ✓ interview binary built"
 
   go:test:
