@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/charmbracelet/huh"
@@ -84,40 +86,53 @@ init any time to add or update providers.`,
 			if err != nil {
 				return err
 			}
-			for {
-				p, err := pickInitAction(providers, cfg)
-				if err != nil {
-					return err
-				}
-				if p == nil {
-					break
-				}
-
-				err = p.Configure(cmd.Context(), &cfg)
-				if errors.Is(err, huh.ErrUserAborted) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-				if err := cfg.Write(); err != nil {
-					return err
-				}
+			if err := runInitLoop(cmd.Context(), &cfg); err != nil {
+				return err
 			}
 
-			rows := make([]string, 0, len(providers))
-			anyConfigured := false
-			for _, p := range providers {
-				rows = append(rows, menuRow(p, cfg))
-				anyConfigured = anyConfigured || p.Configured(cfg)
-			}
-			style, next := ui.Warn, "interview init"
-			if anyConfigured {
-				style, next = ui.OK, "interview launch"
-			}
-			fmt.Fprintln(out, ui.Box("Setup", style, rows...))
-			fmt.Fprintln(out, ui.Next(next))
+			printInitSummary(out, cfg)
 			return nil
 		},
 	}
+}
+
+// runInitLoop shows the provider menu until Exit, persisting after each configure.
+func runInitLoop(ctx context.Context, cfg *config.Config) error {
+	for {
+		p, err := pickInitAction(providers, *cfg)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return nil
+		}
+
+		err = p.Configure(ctx, cfg)
+		if errors.Is(err, huh.ErrUserAborted) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := cfg.Write(); err != nil {
+			return err
+		}
+	}
+}
+
+// printInitSummary renders the final per-provider state box and next step.
+func printInitSummary(out io.Writer, cfg config.Config) {
+	rows := make([]string, 0, len(providers))
+	anyConfigured := false
+	for _, p := range providers {
+		rows = append(rows, menuRow(p, cfg))
+		anyConfigured = anyConfigured || p.Configured(cfg)
+	}
+
+	style, next := ui.Warn, "interview init"
+	if anyConfigured {
+		style, next = ui.OK, "interview launch"
+	}
+	fmt.Fprintln(out, ui.Box("Setup", style, rows...))
+	fmt.Fprintln(out, ui.Next(next))
 }

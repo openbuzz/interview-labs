@@ -1,0 +1,18 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - gocognit
+    - cyclop
+    - nestif
+    - funlen
+  settings:
+    gocognit:
+      min-complexity: 15
+    cyclop:
+      max-complexity: 10
+    nestif:
+      min-complexity: 5
+    funlen:
+      lines: 60
+      statements: 40

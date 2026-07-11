@@ -58,8 +58,8 @@ func hostKeyCallback(knownHostsPath string) (cryptossh.HostKeyCallback, error) {
 	}, nil
 }
 
-// Dial connects with 3s retry until ctx expires. A host-key mismatch fails fast.
-func Dial(ctx context.Context, addr, user, keyPath, knownHostsPath string) (*Client, error) {
+// clientConfig assembles auth and host-key pinning for one session.
+func clientConfig(user, keyPath, knownHostsPath string) (*cryptossh.ClientConfig, error) {
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, err
@@ -73,12 +73,21 @@ func Dial(ctx context.Context, addr, user, keyPath, knownHostsPath string) (*Cli
 		return nil, err
 	}
 
-	conf := &cryptossh.ClientConfig{
+	return &cryptossh.ClientConfig{
 		User:            user,
 		Auth:            []cryptossh.AuthMethod{cryptossh.PublicKeys(signer)},
 		HostKeyCallback: callback,
 		Timeout:         10 * time.Second,
+	}, nil
+}
+
+// Dial connects with 3s retry until ctx expires. A host-key mismatch fails fast.
+func Dial(ctx context.Context, addr, user, keyPath, knownHostsPath string) (*Client, error) {
+	conf, err := clientConfig(user, keyPath, knownHostsPath)
+	if err != nil {
+		return nil, err
 	}
+
 	var lastErr error
 	for {
 		conn, err := cryptossh.Dial("tcp", addr, conf)

@@ -1,6 +1,6 @@
 variable "cloud_provider" {
-  type        = string
   description = "Provider serving the vm role."
+  type        = string
 
   validation {
     condition     = contains(["digitalocean", "hetzner", "aws"], var.cloud_provider)
@@ -9,26 +9,26 @@ variable "cloud_provider" {
 }
 
 variable "region" {
-  type        = string
   description = "Provider region slug for the session VM."
+  type        = string
 }
 
 variable "size" {
-  type        = string
   description = "Provider instance size slug."
+  type        = string
 }
 
 variable "image" {
-  type        = string
   description = "OS image the session VM boots."
+  type        = string
 }
 
 variable "slug" {
-  type        = string
   description = "Session slug, embedded in cloud resource names."
+  type        = string
 }
 
 variable "ssh_dir" {
-  type        = string
   description = "Absolute path that receives the generated keypair (key, key.pub)."
+  type        = string
 }

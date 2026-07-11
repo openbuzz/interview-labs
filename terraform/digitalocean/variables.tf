@@ -1,24 +1,24 @@
 variable "region" {
-  type        = string
   description = "DigitalOcean region slug."
+  type        = string
 }
 
 variable "size" {
-  type        = string
   description = "Droplet size slug."
+  type        = string
 }
 
 variable "image" {
-  type        = string
   description = "Droplet image slug."
+  type        = string
 }
 
 variable "slug" {
-  type        = string
   description = "Session slug, embedded in resource names."
+  type        = string
 }
 
 variable "ssh_public_key" {
-  type        = string
   description = "OpenSSH public key authorized on the droplet."
+  type        = string
 }

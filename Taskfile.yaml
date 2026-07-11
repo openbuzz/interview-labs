@@ -1,0 +1,121 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+
+silent: true
+
+vars:
+  TF_BIN:
+    sh: command -v terraform >/dev/null 2>&1 && echo terraform || echo tofu
+
+tasks:
+  default:
+    cmd: task --list
+
+  check:
+    desc: Verify required host tools are present
+    cmd: |
+      set -e -u -o pipefail
+
+      echo "=> Checking host tools"
+      missing=0
+      for tool in go task golangci-lint tflint trivy docker; do
+        if ! command -v "${tool}" >/dev/null 2>&1; then
+          echo "   ✗ ${tool} not found"
+          missing=1
+        fi
+      done
+      if ! command -v terraform >/dev/null 2>&1 && ! command -v tofu >/dev/null 2>&1; then
+        echo "   ✗ terraform or tofu not found"
+        missing=1
+      fi
+
+      [[ "${missing}" -eq 0 ]] || exit 1
+      echo "=> ✓ All host tools present"
+
+  lint:
+    desc: Lint everything (go + terraform)
+    cmds:
+      - task: go:lint
+      - task: tf:fmt
+      - task: tf:lint
+
+  build:
+    desc: Build the interview binary
+    cmds:
+      - task: go:build
+
+  test:
+    desc: Run the Go test suite
+    cmds:
+      - task: go:test
+
+  scan:
+    desc: Scan terraform for misconfigurations
+    cmds:
+      - task: tf:scan
+
+  go:lint:
+    desc: gofmt, go vet, golangci-lint over the module
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ go lint failed"' ERR
+
+      echo "=> Linting go module"
+      if [[ -n "$(gofmt -l .)" ]]; then
+        echo "   gofmt needs:"
+        gofmt -l .
+        exit 1
+      fi
+      go vet ./...
+      golangci-lint run ./...
+      echo "=> ✓ go lint clean"
+
+  go:build:
+    desc: Build bin/interview
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ go build failed"' ERR
+
+      echo "=> Building interview binary"
+      go build -o bin/interview ./cmd/interview
+      echo "=> ✓ interview binary built"
+
+  go:test:
+    desc: Run go tests
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ go test failed"' ERR
+
+      echo "=> Testing go module"
+      go test ./...
+      echo "=> ✓ go tests passed"
+
+  tf:fmt:
+    desc: Check terraform formatting
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ terraform fmt failed"' ERR
+
+      echo "=> Checking terraform formatting ({{.TF_BIN}})"
+      "{{.TF_BIN}}" fmt -check -recursive terraform
+      echo "=> ✓ terraform formatting clean"
+
+  tf:lint:
+    desc: tflint over the terraform tree
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ tflint failed"' ERR
+
+      echo "=> Linting terraform"
+      (cd terraform && tflint --recursive)
+      echo "=> ✓ tflint clean"
+
+  tf:scan:
+    desc: trivy config scan, findings fail the task
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ trivy scan failed"' ERR
+
+      echo "=> Scanning terraform (trivy)"
+      trivy config --exit-code 1 terraform
+      echo "=> ✓ trivy clean"

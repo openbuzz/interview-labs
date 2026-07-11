@@ -59,6 +59,39 @@ func swapTTY(t *testing.T, tty bool) {
 	t.Cleanup(func() { isTTY = old })
 }
 
+// assertSessionMeta checks the sole session's provider role, ssh user and image.
+func assertSessionMeta(t *testing.T, wantVM, wantUser, wantImage string) *session.Session {
+	t.Helper()
+	all, err := session.List()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("sessions: %d, %v", len(all), err)
+	}
+
+	s := all[0]
+	if s.Meta.Roles["vm"] != wantVM || s.Meta.SSHUser != wantUser ||
+		s.Meta.Image != wantImage {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+	return s
+}
+
+// assertEnvDump checks the fake-terraform env capture for a required and a
+// forbidden entry.
+func assertEnvDump(t *testing.T, dir, want, forbid string) {
+	t.Helper()
+	envDump, err := os.ReadFile(filepath.Join(dir, "env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(envDump), want) {
+		t.Fatalf("terraform child env missing %s", want)
+	}
+	if forbid != "" && strings.Contains(string(envDump), forbid) {
+		t.Fatalf("foreign entry %s leaked into terraform env", forbid)
+	}
+}
+
 func TestLaunchPipelineAgainstLocalSSH(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -255,26 +288,8 @@ func TestLaunchHetznerPipeline(t *testing.T) {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
 
-	all, err := session.List()
-	if err != nil || len(all) != 1 {
-		t.Fatalf("sessions: %d, %v", len(all), err)
-	}
-	s := all[0]
-	if s.Meta.Roles["vm"] != "hetzner" || s.Meta.SSHUser != "root" ||
-		s.Meta.Image != "ubuntu-26.04" {
-		t.Fatalf("meta = %+v", s.Meta)
-	}
-
-	envDump, err := os.ReadFile(filepath.Join(dir, "env.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(envDump), "HCLOUD_TOKEN=hz-tok") {
-		t.Fatal("terraform child env missing HCLOUD_TOKEN")
-	}
-	if strings.Contains(string(envDump), "DIGITALOCEAN_TOKEN=hz-tok") {
-		t.Fatal("foreign token leaked into terraform env")
-	}
+	s := assertSessionMeta(t, "hetzner", "root", "ubuntu-26.04")
+	assertEnvDump(t, dir, "HCLOUD_TOKEN=hz-tok", "DIGITALOCEAN_TOKEN=hz-tok")
 
 	tfvars, err := os.ReadFile(
 		filepath.Join(s.TerraformDir(), "terraform.tfvars.json"))

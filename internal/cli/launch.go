@@ -101,54 +101,17 @@ The VM bills hourly until "interview destroy".`,
 			}
 			fmt.Fprintln(out, ui.Logo())
 
-			configured := make([]provider.Provider, 0, len(providers))
-			for _, p := range provider.ByRole(providers, provider.RoleVM) {
-				if p.Configured(cfg) {
-					configured = append(configured, p)
-				}
-			}
-			if len(configured) == 0 {
-				fmt.Fprintln(out, ui.Box("No providers configured", ui.Fail,
-					"Launch needs a configured cloud provider to host the interview VM.",
-					"",
-					`Run "interview init" to configure one, then re-run "interview launch".`))
-				return fmt.Errorf("no providers configured")
-			}
-
-			vmSel := configured[0]
-			if isTTY() {
-				vmSel, err = pickVMProvider(configured, cfg.Roles.VM)
-				if err != nil {
-					return err
-				}
-			}
-			vm, ok := vmSel.(provider.VM)
-			if !ok {
-				return fmt.Errorf("provider %s cannot host a session VM", vmSel.Name())
-			}
-			cfg.Roles.VM = vm.Name()
-			if err := cfg.Write(); err != nil {
+			vm, err := selectVMProvider(out, &cfg)
+			if err != nil {
 				return err
 			}
-
 			bin, err := terraform.Find()
 			if err != nil {
 				return err
 			}
-
-			if region == "" || size == "" {
-				if !isTTY() {
-					return usageError(
-						"launch needs --region and --size when not on a terminal")
-				}
-				region, size, err = pickRegionSize(cmd.Context(), vm, cfg)
-				if err != nil {
-					return err
-				}
-				vm.SetDefaults(&cfg, region, size)
-				if err := cfg.Write(); err != nil {
-					return err
-				}
+			if err := ensureRegionSize(cmd.Context(), vm, &cfg,
+				&region, &size); err != nil {
+				return err
 			}
 
 			s, err := session.New(region, size, vm.Image(), vm.SSHUser(),
@@ -180,64 +143,164 @@ The VM bills hourly until "interview destroy".`,
 	return cmd
 }
 
-func runLaunch(ctx context.Context, out io.Writer,
-	creds map[string]string, bin terraform.Binary, s *session.Session) error {
-	cache, err := terraform.PluginCacheDir()
+// selectVMProvider gates on configured providers, picks one on a TTY, and
+// persists the pick as the session-role preselect.
+func selectVMProvider(out io.Writer, cfg *config.Config) (provider.VM, error) {
+	configured := make([]provider.Provider, 0, len(providers))
+	for _, p := range provider.ByRole(providers, provider.RoleVM) {
+		if p.Configured(*cfg) {
+			configured = append(configured, p)
+		}
+	}
+	if len(configured) == 0 {
+		fmt.Fprintln(out, ui.Box("No providers configured", ui.Fail,
+			"Launch needs a configured cloud provider to host the interview VM.",
+			"",
+			`Run "interview init" to configure one, then re-run "interview launch".`))
+		return nil, fmt.Errorf("no providers configured")
+	}
+
+	sel := configured[0]
+	if isTTY() {
+		var err error
+		sel, err = pickVMProvider(configured, cfg.Roles.VM)
+		if err != nil {
+			return nil, err
+		}
+	}
+	vm, ok := sel.(provider.VM)
+	if !ok {
+		return nil, fmt.Errorf("provider %s cannot host a session VM", sel.Name())
+	}
+
+	cfg.Roles.VM = vm.Name()
+	if err := cfg.Write(); err != nil {
+		return nil, err
+	}
+	return vm, nil
+}
+
+// ensureRegionSize fills missing region/size from the interactive pickers and
+// persists the picks as next-launch preselects.
+func ensureRegionSize(ctx context.Context, vm provider.VM, cfg *config.Config,
+	region, size *string) error {
+	if *region != "" && *size != "" {
+		return nil
+	}
+	if !isTTY() {
+		return usageError("launch needs --region and --size when not on a terminal")
+	}
+
+	r, sz, err := pickRegionSize(ctx, vm, *cfg)
 	if err != nil {
 		return err
 	}
-	runner := &terraform.Runner{
-		Bin: bin, Dir: s.TerraformDir(),
-		Env: terraform.RunEnv(creds, cache), LogsDir: s.LogsDir(), Out: out,
+	*region, *size = r, sz
+	vm.SetDefaults(cfg, r, sz)
+	return cfg.Write()
+}
+
+// runLaunch drives the launch phases; each helper persists its phase first so
+// a failure names where it died.
+func runLaunch(ctx context.Context, out io.Writer,
+	creds map[string]string, bin terraform.Binary, s *session.Session) error {
+	runner, err := newSessionRunner(out, creds, bin, s)
+	if err != nil {
+		return err
 	}
 
+	if err := stageSession(s); err != nil {
+		return err
+	}
+	if err := tfInit(ctx, runner, s); err != nil {
+		return err
+	}
+	if err := tfApply(ctx, runner, s); err != nil {
+		return err
+	}
+	ip, err := fetchIP(ctx, runner, s)
+	if err != nil {
+		return err
+	}
+
+	client, err := waitSSH(ctx, s, ip)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if err := greet(ctx, out, client, s); err != nil {
+		return err
+	}
+	return printLaunchSummary(out, s, ip)
+}
+
+// newSessionRunner builds the terraform runner over the session dirs.
+func newSessionRunner(out io.Writer, creds map[string]string,
+	bin terraform.Binary, s *session.Session) (*terraform.Runner, error) {
+	cache, err := terraform.PluginCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	return &terraform.Runner{
+		Bin: bin, Dir: s.TerraformDir(),
+		Env: terraform.RunEnv(creds, cache), LogsDir: s.LogsDir(), Out: out,
+	}, nil
+}
+
+// stageSession materializes the embedded tree and tfvars into the session dir.
+func stageSession(s *session.Session) error {
 	if err := s.SetPhase("stage"); err != nil {
 		return err
 	}
 	if err := terraform.Stage(s.TerraformDir()); err != nil {
 		return err
 	}
-	if err := terraform.WriteTfvars(s.TerraformDir(), s.Meta.Roles["vm"], s.Meta.Region,
-		s.Meta.Size, s.Meta.Image, s.Meta.Slug, s.SSHDir()); err != nil {
-		return err
-	}
+	return terraform.WriteTfvars(s.TerraformDir(), s.Meta.Roles["vm"], s.Meta.Region,
+		s.Meta.Size, s.Meta.Image, s.Meta.Slug, s.SSHDir())
+}
 
+func tfInit(ctx context.Context, r *terraform.Runner, s *session.Session) error {
 	if err := s.SetPhase("terraform-init"); err != nil {
 		return err
 	}
-	if err := runner.Init(ctx); err != nil {
-		return err
-	}
+	return r.Init(ctx)
+}
+
+func tfApply(ctx context.Context, r *terraform.Runner, s *session.Session) error {
 	if err := s.SetPhase("terraform-apply"); err != nil {
 		return err
 	}
-	if err := runner.Apply(ctx); err != nil {
-		return err
-	}
+	return r.Apply(ctx)
+}
 
+// fetchIP reads the root outputs and persists the address.
+func fetchIP(ctx context.Context, r *terraform.Runner,
+	s *session.Session) (string, error) {
 	if err := s.SetPhase("outputs"); err != nil {
-		return err
+		return "", err
 	}
-	outputs, err := runner.Outputs(ctx)
+	outputs, err := r.Outputs(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := s.SetIP(outputs.IP); err != nil {
-		return err
-	}
+	return outputs.IP, s.SetIP(outputs.IP)
+}
 
+// waitSSH dials until the VM answers or the 5-minute budget expires.
+func waitSSH(ctx context.Context, s *session.Session, ip string) (*ssh.Client, error) {
 	if err := s.SetPhase("wait-ssh"); err != nil {
-		return err
+		return nil, err
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	addr := net.JoinHostPort(outputs.IP, strconv.Itoa(sshDialPort))
-	client, err := ssh.Dial(dialCtx, addr, s.Meta.SSHUser, s.KeyPath(), s.KnownHostsPath())
-	if err != nil {
-		return err
-	}
-	defer client.Close()
 
+	addr := net.JoinHostPort(ip, strconv.Itoa(sshDialPort))
+	return ssh.Dial(dialCtx, addr, s.Meta.SSHUser, s.KeyPath(), s.KnownHostsPath())
+}
+
+// greet runs the proof-of-life command and echoes its output.
+func greet(ctx context.Context, out io.Writer, client *ssh.Client,
+	s *session.Session) error {
 	if err := s.SetPhase("hello"); err != nil {
 		return err
 	}
@@ -246,16 +309,21 @@ func runLaunch(ctx context.Context, out io.Writer,
 		return err
 	}
 	fmt.Fprint(out, hello)
+	return nil
+}
 
+// printLaunchSummary marks the session ready and prints the handover lines.
+func printLaunchSummary(out io.Writer, s *session.Session, ip string) error {
 	if err := s.SetPhase("summary"); err != nil {
 		return err
 	}
 	if err := s.SetStatus(session.StatusReady); err != nil {
 		return err
 	}
+
 	sshLine := strings.Join(
-		ssh.Argv(s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, outputs.IP), " ")
-	fmt.Fprintf(out, "\n%s\n", ui.RowOK(s.Meta.Slug, outputs.IP))
+		ssh.Argv(s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, ip), " ")
+	fmt.Fprintf(out, "\n%s\n", ui.RowOK(s.Meta.Slug, ip))
 	fmt.Fprintf(out, "%s\n", ui.Faint.Render(sshLine))
 	fmt.Fprintln(out, ui.Next(
 		"interview ssh "+s.Meta.Slug, "interview destroy "+s.Meta.Slug))

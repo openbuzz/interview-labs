@@ -35,81 +35,97 @@ func newDoctorCmd() *cobra.Command {
 		Long: `Check the local environment: terraform or opentofu on PATH, the ssh
 client, XDG config/state/cache directories, and stored credentials.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			failed := false
 			p := func(s string) { fmt.Fprintln(cmd.OutOrStdout(), s) }
 
-			// tf binary
-			if bin, err := terraform.Find(); err != nil {
-				failed = true
-				p(ui.RowFail("terraform", "not found"))
-				p("  " + ui.Faint.Render(
-					"install terraform or opentofu, then rerun interview doctor"))
-			} else {
-				p(ui.RowOK(bin.Name, bin.Version+" ("+bin.Path+")"))
-			}
+			ok := checkTerraform(p)
+			checkSSHClient(p)
+			ok = checkStateDirs(p) && ok
+			ok = checkCredentials(cmd.Context(), p) && ok
 
-			// ssh client — a note, never a failure
-			if err := lookupSSH(); err != nil {
-				p(ui.RowWarn("ssh client", "not found — interview ssh unavailable; "+
-					"launch still works"))
-			} else {
-				p(ui.RowOK("ssh client", "found"))
-			}
-
-			// xdg dirs
-			xdgOK := true
-			if p, err := config.Path(); err != nil || os.MkdirAll(filepath.Dir(p), 0o755) != nil {
-				xdgOK = false
-			}
-			if r, err := session.Root(); err != nil || os.MkdirAll(r, 0o755) != nil {
-				xdgOK = false
-			}
-			if _, err := terraform.PluginCacheDir(); err != nil {
-				xdgOK = false
-			}
-			if xdgOK {
-				p(ui.RowOK("state dirs", "writable"))
-			} else {
-				failed = true
-				p(ui.RowFail("state dirs", "cannot create XDG directories"))
-			}
-
-			// credentials — one row per registered VM provider
-			cfg, err := config.Load()
-			if err != nil {
-				failed = true
-				p(ui.RowFail("credentials", "config unreadable: "+err.Error()))
-			} else {
-				anyConfigured := false
-				for _, pr := range provider.ByRole(providers, provider.RoleVM) {
-					vm, ok := pr.(provider.VM)
-					if !ok {
-						continue
-					}
-					if !vm.Configured(cfg) {
-						p(ui.RowWarn(pr.Label(), "not configured"))
-						continue
-					}
-
-					anyConfigured = true
-					if err := validateCreds(cmd.Context(), vm, cfg); err != nil {
-						failed = true
-						p(ui.RowFail(pr.Label(), err.Error()))
-						p("  " + ui.Faint.Render(
-							"run interview init to replace the credentials"))
-					} else {
-						p(ui.RowOK(pr.Label(), "credentials valid"))
-					}
-				}
-				if !anyConfigured {
-					p("  " + ui.Faint.Render("run interview init to configure a provider"))
-				}
-			}
-
-			if failed {
+			if !ok {
 				return fmt.Errorf("doctor found problems")
 			}
 			return nil
 		},
 	}
+}
+
+// checkTerraform reports the tf binary row.
+func checkTerraform(p func(string)) bool {
+	bin, err := terraform.Find()
+	if err != nil {
+		p(ui.RowFail("terraform", "not found"))
+		p("  " + ui.Faint.Render(
+			"install terraform or opentofu, then rerun interview doctor"))
+		return false
+	}
+
+	p(ui.RowOK(bin.Name, bin.Version+" ("+bin.Path+")"))
+	return true
+}
+
+// checkSSHClient reports the ssh row — a note, never a failure.
+func checkSSHClient(p func(string)) {
+	if err := lookupSSH(); err != nil {
+		p(ui.RowWarn("ssh client", "not found — interview ssh unavailable; "+
+			"launch still works"))
+		return
+	}
+	p(ui.RowOK("ssh client", "found"))
+}
+
+// checkStateDirs reports whether the XDG dirs are creatable.
+func checkStateDirs(p func(string)) bool {
+	ok := true
+	if cp, err := config.Path(); err != nil ||
+		os.MkdirAll(filepath.Dir(cp), 0o755) != nil {
+		ok = false
+	}
+	if r, err := session.Root(); err != nil || os.MkdirAll(r, 0o755) != nil {
+		ok = false
+	}
+	if _, err := terraform.PluginCacheDir(); err != nil {
+		ok = false
+	}
+
+	if !ok {
+		p(ui.RowFail("state dirs", "cannot create XDG directories"))
+		return false
+	}
+	p(ui.RowOK("state dirs", "writable"))
+	return true
+}
+
+// checkCredentials reports one row per registered VM provider.
+func checkCredentials(ctx context.Context, p func(string)) bool {
+	cfg, err := config.Load()
+	if err != nil {
+		p(ui.RowFail("credentials", "config unreadable: "+err.Error()))
+		return false
+	}
+
+	ok, anyConfigured := true, false
+	for _, pr := range provider.ByRole(providers, provider.RoleVM) {
+		vm, isVM := pr.(provider.VM)
+		if !isVM {
+			continue
+		}
+		if !vm.Configured(cfg) {
+			p(ui.RowWarn(pr.Label(), "not configured"))
+			continue
+		}
+
+		anyConfigured = true
+		if err := validateCreds(ctx, vm, cfg); err != nil {
+			ok = false
+			p(ui.RowFail(pr.Label(), err.Error()))
+			p("  " + ui.Faint.Render("run interview init to replace the credentials"))
+			continue
+		}
+		p(ui.RowOK(pr.Label(), "credentials valid"))
+	}
+	if !anyConfigured {
+		p("  " + ui.Faint.Render("run interview init to configure a provider"))
+	}
+	return ok
 }

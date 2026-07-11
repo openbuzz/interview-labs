@@ -1,0 +1,7 @@
+[tools]
+go = "1.26.5"
+task = "3.52.0"
+golangci-lint = "2.12.2"
+tflint = "0.63.1"
+trivy = "0.72.0"
+bats = "1.13.0"

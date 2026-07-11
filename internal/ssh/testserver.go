@@ -14,6 +14,30 @@ import (
 // Returns its address and the client keypair (PEM private, authorized-keys public).
 func StartTestServer(t *testing.T) (addr, privPEM, pub string) {
 	t.Helper()
+	privPEM, pub = testClientKeypair(t)
+	conf := testServerConfig(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go serveConn(conn, conf)
+		}
+	}()
+	return ln.Addr().String(), privPEM, pub
+}
+
+// testClientKeypair mints the client identity handed back to the test.
+func testClientKeypair(t *testing.T) (privPEM, pub string) {
+	t.Helper()
 	_, clientPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -22,13 +46,17 @@ func StartTestServer(t *testing.T) (addr, privPEM, pub string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	privPEM = string(pem.EncodeToMemory(pemBlock))
 	signer, err := cryptossh.NewSignerFromKey(clientPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub = string(cryptossh.MarshalAuthorizedKey(signer.PublicKey()))
+	return string(pem.EncodeToMemory(pemBlock)),
+		string(cryptossh.MarshalAuthorizedKey(signer.PublicKey()))
+}
 
+// testServerConfig builds an accept-any-key server config with a fresh host key.
+func testServerConfig(t *testing.T) *cryptossh.ServerConfig {
+	t.Helper()
 	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -45,47 +73,37 @@ func StartTestServer(t *testing.T) (addr, privPEM, pub string) {
 		},
 	}
 	conf.AddHostKey(hostSigner)
+	return conf
+}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// serveConn upgrades one TCP conn and answers its channels.
+func serveConn(conn net.Conn, conf *cryptossh.ServerConfig) {
+	sconn, chans, reqs, err := cryptossh.NewServerConn(conn, conf)
 	if err != nil {
-		t.Fatal(err)
+		return
 	}
-	t.Cleanup(func() { ln.Close() })
+	defer sconn.Close()
+	go cryptossh.DiscardRequests(reqs)
 
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				sconn, chans, reqs, err := cryptossh.NewServerConn(conn, conf)
-				if err != nil {
-					return
-				}
-				defer sconn.Close()
-				go cryptossh.DiscardRequests(reqs)
-				for newCh := range chans {
-					ch, chReqs, err := newCh.Accept()
-					if err != nil {
-						continue
-					}
-					go func() {
-						for req := range chReqs {
-							if req.Type == "exec" {
-								req.Reply(true, nil)
-								ch.Write([]byte("Hello world\n"))
-								ch.SendRequest("exit-status", false,
-									[]byte{0, 0, 0, 0})
-								ch.Close()
-							} else {
-								req.Reply(false, nil)
-							}
-						}
-					}()
-				}
-			}()
+	for newCh := range chans {
+		ch, chReqs, err := newCh.Accept()
+		if err != nil {
+			continue
 		}
-	}()
-	return ln.Addr().String(), privPEM, pub
+		go answerExec(ch, chReqs)
+	}
+}
+
+// answerExec replies to exec with a greeting and a zero exit status.
+func answerExec(ch cryptossh.Channel, reqs <-chan *cryptossh.Request) {
+	for req := range reqs {
+		if req.Type != "exec" {
+			req.Reply(false, nil)
+			continue
+		}
+		req.Reply(true, nil)
+		ch.Write([]byte("Hello world\n"))
+		ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+		ch.Close()
+	}
 }

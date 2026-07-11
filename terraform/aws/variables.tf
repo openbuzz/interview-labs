@@ -1,19 +1,19 @@
 variable "size" {
-  type        = string
   description = "EC2 instance type."
+  type        = string
 }
 
 variable "image" {
-  type        = string
   description = "AMI name filter resolved against Canonical's images."
+  type        = string
 }
 
 variable "slug" {
-  type        = string
   description = "Session slug, embedded in resource names."
+  type        = string
 }
 
 variable "ssh_public_key" {
-  type        = string
   description = "OpenSSH public key authorized on the instance."
+  type        = string
 }

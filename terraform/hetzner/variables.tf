@@ -1,24 +1,24 @@
 variable "region" {
-  type        = string
   description = "Hetzner Cloud location slug."
+  type        = string
 }
 
 variable "size" {
-  type        = string
   description = "Server type slug."
+  type        = string
 }
 
 variable "image" {
-  type        = string
   description = "Server image slug."
+  type        = string
 }
 
 variable "slug" {
-  type        = string
   description = "Session slug, embedded in resource names."
+  type        = string
 }
 
 variable "ssh_public_key" {
-  type        = string
   description = "OpenSSH public key authorized on the server."
+  type        = string
 }

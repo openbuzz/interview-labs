@@ -33,6 +33,12 @@ func TestNewCreatesLayout(t *testing.T) {
 			t.Fatalf("%s perm = %o, want 700", d, fi.Mode().Perm())
 		}
 	}
+}
+
+func TestNewInitialMetadata(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s := newTestSession(t)
+
 	fi, err := os.Stat(s.MetadataPath())
 	if err != nil {
 		t.Fatal(err)

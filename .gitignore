@@ -1,3 +1,4 @@
 /interview
+/bin/
 /terraform/.terraform/
 /terraform/*.tfstate*
