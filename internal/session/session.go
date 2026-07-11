@@ -29,21 +29,24 @@ type TerraformInfo struct {
 
 // Metadata is the metadata.json schema.
 type Metadata struct {
-	Schema    int               `json:"schema"`
-	Slug      string            `json:"slug"`
-	CreatedAt time.Time         `json:"created_at"`
-	Region    string            `json:"region"`
-	Size      string            `json:"size"`
-	Image     string            `json:"image"`
-	Roles     map[string]string `json:"roles"`
-	SSHUser   string            `json:"ssh_user,omitempty"`
-	Terraform TerraformInfo     `json:"terraform"`
-	IP        string            `json:"ip,omitempty"`
-	FQDN      string            `json:"fqdn,omitempty"`
-	AIKeyHash string            `json:"ai_key_hash,omitempty"`
-	AICapUSD  float64           `json:"ai_cap_usd,omitempty"`
-	Status    string            `json:"status"`
-	Phase     string            `json:"phase"`
+	Schema          int               `json:"schema"`
+	Slug            string            `json:"slug"`
+	CreatedAt       time.Time         `json:"created_at"`
+	Region          string            `json:"region"`
+	Size            string            `json:"size"`
+	Image           string            `json:"image"`
+	Profile         string            `json:"profile,omitempty"`
+	Roles           map[string]string `json:"roles"`
+	SSHUser         string            `json:"ssh_user,omitempty"`
+	Terraform       TerraformInfo     `json:"terraform"`
+	IP              string            `json:"ip,omitempty"`
+	FQDN            string            `json:"fqdn,omitempty"`
+	AIKeyHash       string            `json:"ai_key_hash,omitempty"`
+	AICapUSD        float64           `json:"ai_cap_usd,omitempty"`
+	GatewayPassword string            `json:"gateway_password,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	Status          string            `json:"status"`
+	Phase           string            `json:"phase"`
 }
 
 // Session is one lab session on disk.
@@ -163,7 +166,7 @@ func Get(slug string) (*Session, error) {
 	if s.Meta.Roles == nil {
 		s.Meta.Roles = map[string]string{"vm": "digitalocean"}
 	}
-	if s.Meta.SSHUser == "" {
+	if s.Meta.SSHUser == "" && s.Meta.Schema < 2 {
 		s.Meta.SSHUser = "root"
 	}
 	return s, nil
@@ -190,10 +193,14 @@ func (s *Session) SetIP(ip string) error { s.Meta.IP = ip; return s.Save() }
 // SetFQDN persists the session's DNS name.
 func (s *Session) SetFQDN(fqdn string) error { s.Meta.FQDN = fqdn; return s.Save() }
 
+// SetURL persists the session's handover URL.
+func (s *Session) SetURL(u string) error { s.Meta.URL = u; return s.Save() }
+
 // Path helpers.
 func (s *Session) MetadataPath() string   { return filepath.Join(s.Dir, "metadata.json") }
 func (s *Session) SSHDir() string         { return filepath.Join(s.Dir, "ssh") }
 func (s *Session) TerraformDir() string   { return filepath.Join(s.Dir, "terraform") }
+func (s *Session) StackDir() string       { return filepath.Join(s.Dir, "docker") }
 func (s *Session) LogsDir() string        { return filepath.Join(s.Dir, "logs") }
 func (s *Session) KeyPath() string        { return filepath.Join(s.SSHDir(), "key") }
 func (s *Session) PubKeyPath() string     { return filepath.Join(s.SSHDir(), "key.pub") }

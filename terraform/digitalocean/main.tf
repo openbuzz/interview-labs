@@ -5,12 +5,13 @@ data "digitalocean_image" "this" {
 }
 
 resource "digitalocean_droplet" "this" {
-  name     = "interview-labs-${var.slug}-vm"
-  region   = var.region
-  size     = var.size
-  image    = data.digitalocean_image.this.slug
-  ssh_keys = [digitalocean_ssh_key.this.fingerprint]
-  tags     = ["interview-labs", "slug:${var.slug}"]
+  name      = "interview-labs-${var.slug}-vm"
+  region    = var.region
+  size      = var.size
+  image     = data.digitalocean_image.this.slug
+  ssh_keys  = [digitalocean_ssh_key.this.fingerprint]
+  tags      = ["interview-labs", "slug:${var.slug}"]
+  user_data = var.user_data != "" ? var.user_data : null
 }
 
 resource "digitalocean_ssh_key" "this" {
@@ -18,8 +19,9 @@ resource "digitalocean_ssh_key" "this" {
   public_key = var.ssh_public_key
 }
 
-# Disposable interview VM: ssh open to the world by design (access is gated
-# by the session keypair and pinned host key), full egress for tooling installs.
+# Disposable interview VM: ssh and the gateway's http port open to the world
+# by design (ssh is keypair-gated, http is password-gated), full egress for
+# tooling installs and image pulls.
 #trivy:ignore:DIG-0001
 #trivy:ignore:DIG-0003
 resource "digitalocean_firewall" "this" {
@@ -29,6 +31,12 @@ resource "digitalocean_firewall" "this" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 

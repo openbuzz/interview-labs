@@ -48,8 +48,8 @@ func TestSessionBoxFields(t *testing.T) {
 
 func TestSessionBoxEmptyIP(t *testing.T) {
 	s := newBoxSession(t, session.StatusFailed, "")
-	if box := sessionBox(s); !strings.Contains(box, "—") {
-		t.Fatalf("empty IP not dashed:\n%s", box)
+	if box := sessionBox(s); strings.Contains(box, "ip") {
+		t.Fatalf("empty IP must omit the row:\n%s", box)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -85,6 +86,38 @@ func assertSessionMeta(t *testing.T, wantVM, wantUser, wantImage string) *sessio
 	return s
 }
 
+// assertRemoteCommands checks the exact ssh exec sequence a cloud launch
+// runs, in order: cloud-init wait, push stack, build stack, compose up.
+func assertRemoteCommands(t *testing.T, rec *sshtest.ExecRecorder, slug string) {
+	t.Helper()
+	want := []string{
+		"cloud-init status --wait",
+		"mkdir -p /opt/interview/docker && tar -xzf - -C /opt/interview/docker",
+		"cd /opt/interview/docker && docker buildx bake gateway devops",
+		"cd /opt/interview/docker && set -a && . /dev/stdin && set +a && " +
+			"docker compose -p interview-" + slug + " up -d --wait",
+	}
+	got := rec.Commands()
+	if len(got) != len(want) {
+		t.Fatalf("remote commands = %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("command %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// assertContainsAll checks out contains every wanted substring.
+func assertContainsAll(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // assertEnvDump checks the fake-terraform env capture for a required and a
 // forbidden entry.
 func assertEnvDump(t *testing.T, dir, want, forbid string) {
@@ -107,10 +140,13 @@ func TestLaunchPipelineAgainstLocalSSH(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
-	addr, privPEM, pub := sshtest.StartTestServer(t)
+	addr, privPEM, pub, rec := sshtest.StartRecordingTestServer(t)
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		t.Fatal(err)
@@ -126,21 +162,24 @@ func TestLaunchPipelineAgainstLocalSSH(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "Hello world") {
-		t.Fatalf("no hello:\n%s", out)
-	}
-	if !strings.Contains(out, "interview destroy") {
-		t.Fatalf("no destroy hint:\n%s", out)
-	}
 
 	all, err := session.List()
 	if err != nil || len(all) != 1 {
 		t.Fatalf("sessions after launch: %d, %v", len(all), err)
 	}
 	s := all[0]
+	assertRemoteCommands(t, rec, s.Meta.Slug)
+
 	if s.Meta.Status != session.StatusReady || s.Meta.IP != host {
 		t.Fatalf("meta = %+v", s.Meta)
 	}
+	if s.Meta.URL != "http://"+host {
+		t.Fatalf("url = %q", s.Meta.URL)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{16}$`).MatchString(s.Meta.GatewayPassword) {
+		t.Fatalf("password = %q", s.Meta.GatewayPassword)
+	}
+	assertContainsAll(t, out, "http://"+host, s.Meta.GatewayPassword, "interview destroy")
 	if _, err := os.Stat(s.KeyPath()); err != nil {
 		t.Fatalf("key not extracted: %v", err)
 	}
@@ -255,10 +294,13 @@ func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 	swapTTY(t, true)
 	oldPick, oldRS := pickVMProvider, pickRegionSize
 	t.Cleanup(func() { pickVMProvider, pickRegionSize = oldPick, oldRS })
+	oldProfile := pickProfile
+	t.Cleanup(func() { pickProfile = oldProfile })
 	pickVMProvider = func(configured []provider.Provider,
 		_ string) (provider.Provider, error) {
 		return configured[0], nil
 	}
+	pickProfile = func(_ string) (string, error) { return "devops", nil }
 	var sawPreRegion, sawPreInstance string
 	pickRegionSize = func(_ context.Context, _ io.Writer, vm provider.VM,
 		cfg config.Config) (provider.Option, provider.SizeInfo, error) {
@@ -324,6 +366,9 @@ func TestLaunchHetznerPipeline(t *testing.T) {
 	if !strings.Contains(string(tfvars), `"cloud_provider": "hetzner"`) {
 		t.Fatalf("tfvars:\n%s", tfvars)
 	}
+	if !strings.Contains(string(tfvars), `"user_data": "#cloud-config`) {
+		t.Fatalf("tfvars missing user_data:\n%s", tfvars)
+	}
 }
 
 func TestLaunchAWSPipeline(t *testing.T) {
@@ -381,20 +426,27 @@ func TestLaunchQuietRendersPhaseRows(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	oldUI := ui.Interactive
 	ui.Interactive = func() bool { return false } // plain step lines, no ANSI redraw
 	t.Cleanup(func() { ui.Interactive = oldUI })
-	// swapTTY(true) also routes selectVMProvider through the real huh picker;
-	// stub it like the sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
+	// swapTTY(true) also routes selectVMProvider and ensureProfile through
+	// the real huh pickers; stub both like the sibling TTY tests do so the
+	// sandbox (no /dev/tty) doesn't block.
 	oldPick := pickVMProvider
 	t.Cleanup(func() { pickVMProvider = oldPick })
 	pickVMProvider = func(configured []provider.Provider,
 		_ string) (provider.Provider, error) {
 		return configured[0], nil
 	}
+	oldProfile := pickProfile
+	t.Cleanup(func() { pickProfile = oldProfile })
+	pickProfile = func(_ string) (string, error) { return "devops", nil }
 
 	addr, privPEM, pub := sshtest.StartTestServer(t)
 	host, portStr, err := net.SplitHostPort(addr)
@@ -414,7 +466,8 @@ func TestLaunchQuietRendersPhaseRows(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
-	for _, row := range []string{"stage", "terraform init", "terraform apply", "wait-ssh"} {
+	for _, row := range []string{"stage", "terraform init", "terraform apply",
+		"wait-ssh", "cloud-init", "push stack", "build stack", "compose up"} {
 		if !strings.Contains(out, ui.GlyphOK+" "+row) {
 			t.Fatalf("missing quiet row %q:\n%s", row, out)
 		}
@@ -429,14 +482,18 @@ func TestLaunchVerboseStreamsTerraform(t *testing.T) {
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
-	// swapTTY(true) also routes selectVMProvider through the real huh picker;
-	// stub it like the sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
+	// swapTTY(true) also routes selectVMProvider and ensureProfile through
+	// the real huh pickers; stub both like the sibling TTY tests do so the
+	// sandbox (no /dev/tty) doesn't block.
 	oldPick := pickVMProvider
 	t.Cleanup(func() { pickVMProvider = oldPick })
 	pickVMProvider = func(configured []provider.Provider,
 		_ string) (provider.Provider, error) {
 		return configured[0], nil
 	}
+	oldProfile := pickProfile
+	t.Cleanup(func() { pickProfile = oldProfile })
+	pickProfile = func(_ string) (string, error) { return "devops", nil }
 
 	addr, privPEM, pub := sshtest.StartTestServer(t)
 	host, portStr, err := net.SplitHostPort(addr)
@@ -631,10 +688,13 @@ func TestLaunchConfirmNoCancelsCleanly(t *testing.T) {
 	t.Cleanup(func() {
 		pickVMProvider, pickRegionSize, confirmLaunch = oldPick, oldRS, oldC
 	})
+	oldProfile := pickProfile
+	t.Cleanup(func() { pickProfile = oldProfile })
 	pickVMProvider = func(configured []provider.Provider,
 		_ string) (provider.Provider, error) {
 		return configured[0], nil
 	}
+	pickProfile = func(_ string) (string, error) { return "devops", nil }
 	pickRegionSize = func(_ context.Context, _ io.Writer, _ provider.VM,
 		_ config.Config) (provider.Option, provider.SizeInfo, error) {
 		return provider.Option{Slug: "fra1", Label: "fra1  Frankfurt 1"},
@@ -671,10 +731,13 @@ func TestLaunchYesSkipsConfirmButPrintsSummary(t *testing.T) {
 	t.Cleanup(func() {
 		pickVMProvider, pickRegionSize, confirmLaunch = oldPick, oldRS, oldC
 	})
+	oldProfile := pickProfile
+	t.Cleanup(func() { pickProfile = oldProfile })
 	pickVMProvider = func(configured []provider.Provider,
 		_ string) (provider.Provider, error) {
 		return configured[0], nil
 	}
+	pickProfile = func(_ string) (string, error) { return "devops", nil }
 	pickRegionSize = func(_ context.Context, _ io.Writer, _ provider.VM,
 		_ config.Config) (provider.Option, provider.SizeInfo, error) {
 		return provider.Option{Slug: "fra1", Label: "fra1  Frankfurt 1"},
@@ -729,10 +792,13 @@ func TestLaunchSummaryFlagsPathFallsBackToSlugs(t *testing.T) {
 
 	oldPick, oldC := pickVMProvider, confirmLaunch
 	t.Cleanup(func() { pickVMProvider, confirmLaunch = oldPick, oldC })
+	oldProfile := pickProfile
+	t.Cleanup(func() { pickProfile = oldProfile })
 	pickVMProvider = func(configured []provider.Provider,
 		_ string) (provider.Provider, error) {
 		return configured[0], nil
 	}
+	pickProfile = func(_ string) (string, error) { return "devops", nil }
 	confirmLaunch = func() (bool, error) { return false, nil }
 
 	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-2vcpu-4gb")
@@ -809,7 +875,8 @@ func TestLaunchWithAIAndDNS(t *testing.T) {
 	sshDialPort = port
 	t.Cleanup(func() { sshDialPort = oldPort })
 
-	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb",
+		"--profile", "devops-ai")
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
@@ -931,7 +998,8 @@ func TestLaunchMintFailureFailsSession(t *testing.T) {
 	sshDialPort = port
 	t.Cleanup(func() { sshDialPort = oldPort })
 
-	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb",
+		"--profile", "devops-ai")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1\n%s", code, out)
 	}
@@ -946,5 +1014,107 @@ func TestLaunchMintFailureFailsSession(t *testing.T) {
 	}
 	if !strings.Contains(out, "interview destroy") {
 		t.Fatalf("missing destroy hint:\n%s", out)
+	}
+}
+
+func TestLaunchProfileFlagRejected(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb",
+		"--profile", "bogus")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\n%s", code, out)
+	}
+	if !strings.Contains(out, "backend, devops, backend-ai, devops-ai") {
+		t.Fatalf("error must list profiles:\n%s", out)
+	}
+}
+
+func TestLaunchNonTTYDefaultsDevopsAndSkipsMint(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	_, mintCalls := mintServer(t, "hash-1")
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	if mintCalls.Load() != 0 {
+		t.Fatalf("devops profile must not mint (calls = %d)", mintCalls.Load())
+	}
+	all, _ := session.List()
+	if len(all) != 1 || all[0].Meta.Profile != "devops" {
+		t.Fatalf("profile = %+v", all[0].Meta)
+	}
+	if _, ok := all[0].Meta.Roles["ai"]; ok {
+		t.Fatalf("non-ai profile must not record an ai role: %v", all[0].Meta.Roles)
+	}
+}
+
+func TestLaunchAIProfileMints(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	_, mintCalls := mintServer(t, "hash-1")
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb",
+		"--profile", "devops-ai")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	if mintCalls.Load() != 1 {
+		t.Fatalf("mint calls = %d, want 1", mintCalls.Load())
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Profile != "devops-ai" {
+		t.Fatalf("config profile = %q, want devops-ai (remembered)", cfg.Profile)
+	}
+
+	all, _ := session.List()
+	raw, err := os.ReadFile(all[0].MetadataPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "sk-or-child") {
+		t.Fatalf("key value leaked into metadata:\n%s", raw)
 	}
 }

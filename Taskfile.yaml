@@ -182,6 +182,25 @@ tasks:
       )
       echo "=> ✓ docker lint clean"
 
+  docker:payload:
+    desc: Regenerate the _payload/ gateway copy the interview binary embeds
+    cmd: |
+      set -e -u -o pipefail
+      trap 'echo "=> ✗ docker payload failed"' ERR
+
+      echo "=> Regenerating gateway payload copy"
+      dst=_payload/docker/images/gateway
+      rm -rf "${dst}"
+      mkdir -p "${dst}"
+      find docker/images/gateway -maxdepth 1 -type f \( -name Dockerfile \
+        -o -name .dockerignore -o -name go.mod -o -name go.sum \
+        -o -name '*.go' -o -name '*.html' -o -name '*.css' \) \
+        ! -name '*_test.go' -exec cp {} "${dst}/" \;
+      # go:embed skips any dir containing go.mod, even under _payload —
+      # park it under a neutral name; Stage restores it.
+      mv "${dst}/go.mod" "${dst}/go.mod.payload"
+      echo "=> ✓ gateway payload regenerated"
+
   docker:build:
     desc: Build the stack images via docker bake (dev loop; the VM runs the same files)
     cmd: |

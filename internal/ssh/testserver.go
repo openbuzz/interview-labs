@@ -4,16 +4,47 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"io"
 	"net"
+	"sync"
 	"testing"
 
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
-// StartTestServer runs a minimal ssh server answering exec requests with "Hello world".
-// Returns its address and the client keypair (PEM private, authorized-keys public).
+// ExecRecorder captures the exec commands a test server answered, in order.
+type ExecRecorder struct {
+	mu   sync.Mutex
+	cmds []string
+}
+
+func (r *ExecRecorder) add(cmd string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cmds = append(r.cmds, cmd)
+}
+
+// Commands returns a copy of the exec commands received so far.
+func (r *ExecRecorder) Commands() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.cmds...)
+}
+
+// StartTestServer runs a minimal ssh server answering exec requests with
+// "Hello world". Returns its address and the client keypair.
 func StartTestServer(t *testing.T) (addr, privPEM, pub string) {
 	t.Helper()
+	addr, privPEM, pub, _ = StartRecordingTestServer(t)
+	return addr, privPEM, pub
+}
+
+// StartRecordingTestServer is StartTestServer plus a recorder of every exec
+// command received — launch pipeline tests assert the remote sequence.
+func StartRecordingTestServer(t *testing.T) (addr, privPEM, pub string,
+	rec *ExecRecorder) {
+	t.Helper()
+	rec = &ExecRecorder{}
 	privPEM, pub = testClientKeypair(t)
 	conf := testServerConfig(t)
 
@@ -29,10 +60,10 @@ func StartTestServer(t *testing.T) (addr, privPEM, pub string) {
 			if err != nil {
 				return
 			}
-			go serveConn(conn, conf)
+			go serveConn(conn, conf, rec)
 		}
 	}()
-	return ln.Addr().String(), privPEM, pub
+	return ln.Addr().String(), privPEM, pub, rec
 }
 
 // testClientKeypair mints the client identity handed back to the test.
@@ -77,7 +108,7 @@ func testServerConfig(t *testing.T) *cryptossh.ServerConfig {
 }
 
 // serveConn upgrades one TCP conn and answers its channels.
-func serveConn(conn net.Conn, conf *cryptossh.ServerConfig) {
+func serveConn(conn net.Conn, conf *cryptossh.ServerConfig, rec *ExecRecorder) {
 	sconn, chans, reqs, err := cryptossh.NewServerConn(conn, conf)
 	if err != nil {
 		return
@@ -90,18 +121,28 @@ func serveConn(conn net.Conn, conf *cryptossh.ServerConfig) {
 		if err != nil {
 			continue
 		}
-		go answerExec(ch, chReqs)
+		go answerExec(ch, chReqs, rec)
 	}
 }
 
-// answerExec replies to exec with a greeting and a zero exit status.
-func answerExec(ch cryptossh.Channel, reqs <-chan *cryptossh.Request) {
+// answerExec records the exec command, drains its stdin (payload pushes
+// must never stall on window credit), and replies with a greeting and a
+// zero exit status.
+func answerExec(ch cryptossh.Channel, reqs <-chan *cryptossh.Request,
+	rec *ExecRecorder) {
 	for req := range reqs {
 		if req.Type != "exec" {
 			req.Reply(false, nil)
 			continue
 		}
+		if len(req.Payload) > 4 {
+			rec.add(string(req.Payload[4:]))
+		}
 		req.Reply(true, nil)
+
+		// Drain fully before replying: closing the channel while the
+		// client is still pushing stdin aborts its write with io.EOF.
+		io.Copy(io.Discard, ch)
 		ch.Write([]byte("Hello world\n"))
 		ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
 		ch.Close()

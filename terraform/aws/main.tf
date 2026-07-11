@@ -19,6 +19,7 @@ resource "aws_instance" "this" {
   key_name                    = aws_key_pair.this.key_name
   vpc_security_group_ids      = [aws_security_group.this.id]
   associate_public_ip_address = true
+  user_data                   = var.user_data != "" ? var.user_data : null
 
   metadata_options {
     http_tokens = "required"
@@ -41,8 +42,9 @@ resource "aws_key_pair" "this" {
   public_key = var.ssh_public_key
 }
 
-# Disposable interview VM: ssh open to the world by design (access is gated
-# by the session keypair and pinned host key), full egress for tooling installs.
+# Disposable interview VM: ssh and the gateway's http port open to the world
+# by design (ssh is keypair-gated, http is password-gated), full egress for
+# tooling installs and image pulls.
 #trivy:ignore:AWS-0107
 #trivy:ignore:AWS-0104
 resource "aws_security_group" "this" {
@@ -54,6 +56,15 @@ resource "aws_security_group" "this" {
     protocol         = "tcp"
     from_port        = 22
     to_port          = 22
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
+    description      = "gateway http from anywhere (password-gated)"
+    protocol         = "tcp"
+    from_port        = 80
+    to_port          = 80
     cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
   }

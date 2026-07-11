@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	cryptossh "golang.org/x/crypto/ssh"
@@ -22,14 +24,9 @@ type Client struct {
 // Close closes the connection.
 func (c *Client) Close() error { return c.c.Close() }
 
-// Run executes command and returns its combined output.
-func (c *Client) Run(ctx context.Context, command string) (string, error) {
-	sess, err := c.c.NewSession()
-	if err != nil {
-		return "", err
-	}
-	defer sess.Close()
-
+// watchCtx closes sess when ctx cancels; call the returned stop once the
+// command finishes.
+func watchCtx(ctx context.Context, sess *cryptossh.Session) (stop func()) {
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -38,9 +35,61 @@ func (c *Client) Run(ctx context.Context, command string) (string, error) {
 		case <-done:
 		}
 	}()
+	return func() { close(done) }
+}
+
+// Run executes command and returns its combined output.
+func (c *Client) Run(ctx context.Context, command string) (string, error) {
+	return c.RunIn(ctx, nil, command)
+}
+
+// RunIn executes command with stdin streamed from r (nil for none) and
+// returns the combined output.
+func (c *Client) RunIn(ctx context.Context, r io.Reader, command string) (string, error) {
+	sess, err := c.c.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer sess.Close()
+	if r != nil {
+		sess.Stdin = r
+	}
+
+	stop := watchCtx(ctx, sess)
 	out, err := sess.CombinedOutput(command)
-	close(done)
+	stop()
 	return string(out), err
+}
+
+// syncWriter serializes writes so stdout and stderr can share one
+// destination without racing — they copy from independent goroutines.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// RunStream executes command, streaming combined output to w as it arrives
+// — launch uses it for the long image build.
+func (c *Client) RunStream(ctx context.Context, w io.Writer, command string) error {
+	sess, err := c.c.NewSession()
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	sw := &syncWriter{w: w}
+	sess.Stdout = sw
+	sess.Stderr = sw
+
+	stop := watchCtx(ctx, sess)
+	err = sess.Run(command)
+	stop()
+	return err
 }
 
 // hostKeyCallback pins on first contact, verifies strictly afterwards.

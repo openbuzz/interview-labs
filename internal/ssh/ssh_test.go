@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -97,5 +98,62 @@ func TestArgv(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("Argv()[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// dialTestServer wires a client to the recording server with a fresh
+// key/known_hosts pair in a temp dir.
+func dialTestServer(t *testing.T) (*Client, *ExecRecorder) {
+	t.Helper()
+	addr, privPEM, _, rec := StartRecordingTestServer(t)
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key")
+	if err := os.WriteFile(keyPath, []byte(privPEM), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := Dial(context.Background(), addr, "test", keyPath,
+		filepath.Join(dir, "known_hosts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close() })
+	return client, rec
+}
+
+func TestRunInRecordsCommandAndDrainsStdin(t *testing.T) {
+	client, rec := dialTestServer(t)
+
+	payload := bytes.Repeat([]byte("x"), 1<<20) // 1 MiB: stalls if undrained
+	out, err := client.RunIn(context.Background(), bytes.NewReader(payload),
+		"tar -xzf - -C /opt/interview")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out, "Hello world") {
+		t.Fatalf("output = %q", out)
+	}
+	cmds := rec.Commands()
+	if len(cmds) != 1 || cmds[0] != "tar -xzf - -C /opt/interview" {
+		t.Fatalf("recorded = %v", cmds)
+	}
+}
+
+func TestRunStreamWritesOutput(t *testing.T) {
+	client, rec := dialTestServer(t)
+
+	var buf bytes.Buffer
+	if err := client.RunStream(context.Background(), &buf,
+		"docker buildx bake gateway devops"); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(buf.String(), "Hello world") {
+		t.Fatalf("streamed = %q", buf.String())
+	}
+	if got := rec.Commands(); len(got) != 1 ||
+		got[0] != "docker buildx bake gateway devops" {
+		t.Fatalf("recorded = %v", got)
 	}
 }

@@ -22,3 +22,9 @@ variable "ssh_public_key" {
   description = "OpenSSH public key authorized on the server."
   type        = string
 }
+
+variable "user_data" {
+  description = "cloud-init document the VM boots with."
+  type        = string
+  default     = ""
+}

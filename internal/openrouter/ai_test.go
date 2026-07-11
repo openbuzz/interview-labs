@@ -76,7 +76,7 @@ func TestMintRevokeThroughCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key.Hash != "h9" || key.CapUSD != DefaultCapUSD {
+	if key.Hash != "h9" || key.CapUSD != DefaultCapUSD || key.Key != "sk" {
 		t.Fatalf("minted = %+v", key)
 	}
 	if sawLabel != "interview-labs-calm-otter" {

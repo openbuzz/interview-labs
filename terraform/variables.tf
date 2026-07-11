@@ -50,3 +50,9 @@ variable "dns_base_domain" {
   type        = string
   default     = ""
 }
+
+variable "user_data" {
+  description = "cloud-init document the session VM boots with."
+  type        = string
+  default     = ""
+}

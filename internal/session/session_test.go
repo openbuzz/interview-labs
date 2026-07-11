@@ -208,8 +208,10 @@ func TestSSHUserPersistsAndBackfills(t *testing.T) {
 		t.Fatalf("ssh user = %q, want ubuntu", got.Meta.SSHUser)
 	}
 
-	// legacy metadata without ssh_user reads back as root
+	// pre-schema-2 metadata without ssh_user reads back as root; current
+	// schema sessions (e.g. local, schema 2) legitimately have none.
 	got.Meta.SSHUser = ""
+	got.Meta.Schema = 1
 	if err := got.Save(); err != nil {
 		t.Fatal(err)
 	}

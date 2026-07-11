@@ -6,6 +6,7 @@ module "aws" {
   image          = var.image
   slug           = var.slug
   ssh_public_key = tls_private_key.ssh.public_key_openssh
+  user_data      = var.user_data
 }
 
 module "digitalocean" {
@@ -17,6 +18,7 @@ module "digitalocean" {
   image          = var.image
   slug           = var.slug
   ssh_public_key = tls_private_key.ssh.public_key_openssh
+  user_data      = var.user_data
 }
 
 module "hetzner" {
@@ -28,6 +30,7 @@ module "hetzner" {
   image          = var.image
   slug           = var.slug
   ssh_public_key = tls_private_key.ssh.public_key_openssh
+  user_data      = var.user_data
 }
 
 # The active VM module's address, shared by the ip output and the DNS record.

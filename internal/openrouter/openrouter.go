@@ -29,9 +29,10 @@ type mintRequest struct {
 	Limit float64 `json:"limit"`
 }
 
-// mintResponse decodes only the durable id. The plaintext key in the same
-// response is deliberately never decoded: nothing consumes it yet.
+// mintResponse decodes the durable id and the plaintext key value. The
+// value is handed to the stack as process env and never persisted.
 type mintResponse struct {
+	Key  string `json:"key"`
 	Data struct {
 		Hash string `json:"hash"`
 	} `json:"data"`
@@ -61,23 +62,24 @@ func validate(ctx context.Context, managementKey string) error {
 	return nil
 }
 
-// mint creates one spend-capped API key named label; the response's key
-// value is discarded — only the revoke handle is returned.
+// mint creates one spend-capped API key named label; it returns both the
+// durable revoke handle and the plaintext key value (memory-only, never
+// persisted here).
 func mint(ctx context.Context, managementKey string, capUSD float64,
-	label string) (string, error) {
+	label string) (string, string, error) {
 	body, err := json.Marshal(mintRequest{Name: label, Limit: capUSD})
 	if err != nil {
-		return "", fmt.Errorf("openrouter: mint: encode request: %w", err)
+		return "", "", fmt.Errorf("openrouter: mint: encode request: %w", err)
 	}
 
 	var out mintResponse
 	if err := do(ctx, http.MethodPost, "/keys", managementKey, body, &out); err != nil {
-		return "", fmt.Errorf("openrouter: mint: %w", err)
+		return "", "", fmt.Errorf("openrouter: mint: %w", err)
 	}
 	if out.Data.Hash == "" {
-		return "", fmt.Errorf("openrouter: mint: response missing key id")
+		return "", "", fmt.Errorf("openrouter: mint: response missing key id")
 	}
-	return out.Data.Hash, nil
+	return out.Data.Hash, out.Key, nil
 }
 
 // revoke deletes the key identified by hash. A 404 is success: the key is

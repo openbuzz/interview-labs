@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -18,6 +23,7 @@ import (
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	"github.com/openbuzz/interview-labs/internal/ssh"
+	"github.com/openbuzz/interview-labs/internal/stack"
 	"github.com/openbuzz/interview-labs/internal/terraform"
 	"github.com/openbuzz/interview-labs/internal/ui"
 )
@@ -147,42 +153,110 @@ var confirmLaunch = func() (bool, error) {
 	return ok, err
 }
 
+// stackProfiles are the buildable vscode stacks, menu order. Bake target
+// names equal profile names.
+var stackProfiles = []string{"backend", "devops", "backend-ai", "devops-ai"}
+
+// isAIProfile reports whether a profile bakes the AI CLIs (and so mints a key).
+func isAIProfile(p string) bool { return strings.HasSuffix(p, "-ai") }
+
+// pickProfile is a seam; production shows a huh select over the profiles.
+var pickProfile = func(preselect string) (string, error) {
+	desc := map[string]string{
+		"backend":    "Go, Node and Python toolchains",
+		"devops":     "terraform, kubectl, helm, aws-cli and friends",
+		"backend-ai": "backend plus Claude Code, Codex and OpenCode",
+		"devops-ai":  "devops plus Claude Code, Codex and OpenCode",
+	}
+	opts := make([]huh.Option[string], 0, len(stackProfiles))
+	for _, p := range stackProfiles {
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%-12s— %s", p, desc[p]), p))
+	}
+	sel := preselect
+	err := ui.SelectForm("Select a stack profile",
+		"What the candidate's environment ships. -ai profiles add the AI CLIs.",
+		opts, &sel)
+	return sel, err
+}
+
+// ensureProfile resolves the stack profile: flag, else picker (TTY), else
+// the devops default; the pick is remembered in config like roles.vm.
+func ensureProfile(cfg *config.Config, flag string) (string, error) {
+	p := flag
+	switch {
+	case p != "":
+		if !slices.Contains(stackProfiles, p) {
+			return "", usageError(fmt.Sprintf("unknown profile %q (one of %s)",
+				p, strings.Join(stackProfiles, ", ")))
+		}
+	case !isTTY():
+		p = "devops"
+	default:
+		pre := cfg.Profile
+		if pre == "" {
+			pre = "devops"
+		}
+		var err error
+		if p, err = pickProfile(pre); err != nil {
+			return "", err
+		}
+	}
+
+	if p != cfg.Profile {
+		cfg.Profile = p
+		return p, cfg.Write()
+	}
+	return p, nil
+}
+
+// launchFlags bundles the launch command's flag values.
+type launchFlags struct {
+	region, size, profile string
+	yes, noAI, noDNS      bool
+}
+
 func newLaunchCmd() *cobra.Command {
-	var region, size string
-	var yes, noAI, noDNS bool
+	f := &launchFlags{}
 	cmd := &cobra.Command{
 		Use:   "launch",
 		Short: "deploy a session VM",
-		Long: `Deploy a fresh interview VM.
+		Long: `Deploy a fresh interview session.
 
-Steps: pick a configured provider, a region and an instance size (hourly
-price shown), then terraform applies the session, waits for ssh and
-prints a ready-to-paste ssh line. Selections are remembered and
-preselected next time. Pass --yes to skip the billing confirmation.
+Steps: pick a configured provider, a stack profile, a region and an
+instance size (hourly price shown), then terraform applies the session,
+cloud-init installs docker while the VM boots, and the CLI builds and
+starts the interview stack (gateway + vscode + dind) on it. The handover
+prints the session URL and gateway password. Selections are remembered
+and preselected next time. Pass --yes to skip the billing confirmation.
 Sessions are independent and run in parallel.
 
-When OpenRouter or Cloudflare are configured, launch also mints a
-spend-capped AI key and creates a proxied DNS record; --no-ai and
---no-dns skip them per session.
+Picking "local" runs the same stack on this machine's docker engine —
+no cloud account, no billing, one local session at a time.
+
+When OpenRouter is configured and an -ai profile is picked, launch mints
+a spend-capped AI key for the stack; when Cloudflare is configured the
+session gets a proxied DNS record. --no-ai and --no-dns skip them.
 
 The VM bills hourly until "interview destroy".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLaunchCmd(cmd, &region, &size, yes, noAI, noDNS)
+			return runLaunchCmd(cmd, f)
 		},
 	}
-	cmd.Flags().StringVar(&region, "region", "",
+	cmd.Flags().StringVar(&f.region, "region", "",
 		"provider region slug (e.g. fra1, fsn1, eu-central-1)")
-	cmd.Flags().StringVar(&size, "size", "",
+	cmd.Flags().StringVar(&f.size, "size", "",
 		"provider size slug (e.g. s-2vcpu-2gb, cx22, m7i.xlarge)")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the billing confirmation prompt")
-	cmd.Flags().BoolVar(&noAI, "no-ai", false, "skip the per-session AI key mint")
-	cmd.Flags().BoolVar(&noDNS, "no-dns", false, "skip the per-session DNS record")
+	cmd.Flags().StringVar(&f.profile, "profile", "",
+		"stack profile: backend, devops, backend-ai, devops-ai")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "skip the billing confirmation prompt")
+	cmd.Flags().BoolVar(&f.noAI, "no-ai", false, "skip the per-session AI key mint")
+	cmd.Flags().BoolVar(&f.noDNS, "no-dns", false, "skip the per-session DNS record")
 	return cmd
 }
 
-// runLaunchCmd resolves a provider, region and size, gates on the billing
-// confirm, and drives the launch.
-func runLaunchCmd(cmd *cobra.Command, region, size *string, yes, noAI, noDNS bool) error {
+// runLaunchCmd resolves provider and profile, then hands off to the cloud
+// pipeline (the local pipeline arrives in plan 3).
+func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 	out := cmd.OutOrStdout()
 	cfg, err := config.Load()
 	if err != nil {
@@ -191,29 +265,41 @@ func runLaunchCmd(cmd *cobra.Command, region, size *string, yes, noAI, noDNS boo
 	printLogoOnce(out)
 	printNarrowWarning(out)
 
-	vm, err := selectVMProvider(out, &cfg)
+	sel, err := selectVMProvider(out, &cfg)
 	if err != nil {
 		return err
 	}
+	profile, err := ensureProfile(&cfg, f.profile)
+	if err != nil {
+		return err
+	}
+	vm, ok := sel.(provider.VM)
+	if !ok {
+		return fmt.Errorf("provider %s cannot host a session VM", sel.Name())
+	}
+	return runCloudLaunch(cmd, out, cfg, vm, profile, f)
+}
+
+// runCloudLaunch drives the terraform-backed pipeline.
+func runCloudLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
+	vm provider.VM, profile string, f *launchFlags) error {
 	bin, err := terraform.Find()
 	if err != nil {
 		return err
 	}
-	regionLabel, si, err := ensureRegionSize(cmd.Context(), out, vm, &cfg, region, size)
+	regionLabel, si, err := ensureRegionSize(cmd.Context(), out, vm, &cfg,
+		&f.region, &f.size)
 	if err != nil {
 		return err
 	}
-	cancelled, err := confirmGate(out, vm, regionLabel, *region, si, *size, yes)
-	if err != nil {
+	cancelled, err := confirmGate(out, vm, regionLabel, f.region, si, f.size, f.yes)
+	if err != nil || cancelled {
 		return err
-	}
-	if cancelled {
-		return nil
 	}
 
-	ai := activeAI(cfg, noAI)
-	access := activeAccess(cfg, noDNS)
-	s, err := session.New(*region, *size, vm.Image(), vm.SSHUser(),
+	ai := activeAI(cfg, f.noAI || !isAIProfile(profile))
+	access := activeAccess(cfg, f.noDNS)
+	s, err := newLaunchSession(f.region, f.size, vm.Image(), vm.SSHUser(), profile,
 		sessionRoles(vm, ai, access),
 		session.TerraformInfo{Binary: bin.Name, Version: bin.Version})
 	if err != nil {
@@ -230,6 +316,22 @@ func runLaunchCmd(cmd *cobra.Command, region, size *string, yes, noAI, noDNS boo
 		return failLaunch(out, s, err)
 	}
 	return nil
+}
+
+// newLaunchSession creates the session and mints its gateway password —
+// split out of runCloudLaunch to stay under the complexity gate.
+func newLaunchSession(region, size, image, sshUser, profile string,
+	roles map[string]string, tf session.TerraformInfo) (*session.Session, error) {
+	s, err := session.New(region, size, image, sshUser, roles, tf)
+	if err != nil {
+		return nil, err
+	}
+	pw, err := stack.GeneratePassword()
+	if err != nil {
+		return nil, err
+	}
+	s.Meta.Profile, s.Meta.GatewayPassword = profile, pw
+	return s, s.Save()
 }
 
 // confirmGate prints the pre-provision summary on a TTY and, unless --yes,
@@ -255,9 +357,9 @@ func confirmGate(out io.Writer, vm provider.VM, regionLabel, region string,
 	return false, nil
 }
 
-// selectVMProvider gates on configured providers, picks one on a TTY, and
-// persists the pick as the session-role preselect.
-func selectVMProvider(out io.Writer, cfg *config.Config) (provider.VM, error) {
+// selectVMProvider gates on configured vm-role providers, picks one on a
+// TTY, and persists the pick as the session-role preselect.
+func selectVMProvider(out io.Writer, cfg *config.Config) (provider.Provider, error) {
 	configured := make([]provider.Provider, 0, len(providers))
 	for _, p := range provider.ByRole(providers, provider.RoleVM) {
 		if p.Configured(*cfg) {
@@ -280,16 +382,12 @@ func selectVMProvider(out io.Writer, cfg *config.Config) (provider.VM, error) {
 			return nil, err
 		}
 	}
-	vm, ok := sel.(provider.VM)
-	if !ok {
-		return nil, fmt.Errorf("provider %s cannot host a session VM", sel.Name())
-	}
 
-	cfg.Roles.VM = vm.Name()
+	cfg.Roles.VM = sel.Name()
 	if err := cfg.Write(); err != nil {
 		return nil, err
 	}
-	return vm, nil
+	return sel, nil
 }
 
 // activeAI resolves the AI provider a launch uses: the sole configured one,
@@ -445,15 +543,7 @@ func runLaunch(ctx context.Context, out io.Writer, in launchInputs,
 	}
 	defer client.Close()
 
-	if in.ai != nil {
-		if err := step(out, quiet, "mint ai key", func() error {
-			return mintAIKey(ctx, in.ai, in.cfg, s)
-		}); err != nil {
-			return err
-		}
-	}
-
-	if err := greet(ctx, out, client, s); err != nil {
+	if err := stackPhases(ctx, out, quiet, client, in, s); err != nil {
 		return err
 	}
 	return printLaunchSummary(out, s)
@@ -500,22 +590,159 @@ func newSessionRunner(out io.Writer, creds map[string]string,
 	}, nil
 }
 
-// mintAIKey mints the session's spend-capped API key and persists the
-// revoke handle immediately — a later phase failure must still revoke.
-func mintAIKey(ctx context.Context, ai provider.AI, cfg config.Config,
-	s *session.Session) error {
-	if err := s.SetPhase("ai-mint"); err != nil {
+// stackPhases provisions the container stack on the VM: docker readiness,
+// payload push, optional key mint, image build, compose up.
+func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
+	in launchInputs, s *session.Session) error {
+	if err := step(out, quiet, "cloud-init", func() error {
+		return waitCloudInit(ctx, client, s)
+	}); err != nil {
 		return err
 	}
-	key, err := ai.Mint(ctx, cfg, s.Meta.Slug)
+	if err := step(out, quiet, "push stack", func() error {
+		return pushStack(ctx, client, s)
+	}); err != nil {
+		return err
+	}
+
+	aiKey := ""
+	if in.ai != nil {
+		if err := step(out, quiet, "mint ai key", func() error {
+			var mintErr error
+			aiKey, mintErr = mintAIKey(ctx, in.ai, in.cfg, s)
+			return mintErr
+		}); err != nil {
+			return err
+		}
+	}
+
+	if err := step(out, quiet, "build stack", func() error {
+		return buildStack(ctx, out, quiet, client, s)
+	}); err != nil {
+		return err
+	}
+	return step(out, quiet, "compose up", func() error {
+		return upStack(ctx, client, s, aiKey)
+	})
+}
+
+// waitCloudInit blocks until the boot-time docker install finishes, on its
+// own budget on top of the launch context.
+func waitCloudInit(ctx context.Context, client *ssh.Client, s *session.Session) error {
+	if err := s.SetPhase("cloud-init"); err != nil {
+		return err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	out, err := client.Run(waitCtx, "cloud-init status --wait")
+	if err != nil {
+		return fmt.Errorf("cloud-init failed — see /var/log/cloud-init-output.log "+
+			"on the VM: %w (output: %s)", err, strings.TrimSpace(out))
+	}
+	return logWrite(s, "cloud-init.log", out)
+}
+
+// pushStack tars the staged docker tree over ssh stdin into RemoteDir.
+func pushStack(ctx context.Context, client *ssh.Client, s *session.Session) error {
+	if err := s.SetPhase("push-stack"); err != nil {
+		return err
+	}
+	data, err := stack.TarGz(s.StackDir())
 	if err != nil {
 		return err
 	}
-	s.Meta.AIKeyHash, s.Meta.AICapUSD = key.Hash, key.CapUSD
-	return s.Save()
+
+	out, err := client.RunIn(ctx, bytes.NewReader(data), stack.ExtractCmd())
+	if err != nil {
+		return fmt.Errorf("push stack: %w (output: %s)", err, strings.TrimSpace(out))
+	}
+	return nil
 }
 
-// stageSession materializes the embedded tree and tfvars into the session dir.
+// buildStack runs the bake build on the VM — the slow phase; output streams
+// to the session log (and the terminal when verbose).
+func buildStack(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
+	s *session.Session) error {
+	if err := s.SetPhase("build-stack"); err != nil {
+		return err
+	}
+	logPath := filepath.Join(s.LogsDir(), "stack-build.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+
+	dest := io.Writer(logFile)
+	if !quiet {
+		dest = io.MultiWriter(out, logFile)
+	}
+	if err := client.RunStream(ctx, dest, stack.BakeCmd(s.Meta.Profile)); err != nil {
+		return fmt.Errorf("stack build failed (log: %s): %w", logPath, err)
+	}
+	return nil
+}
+
+// upStack starts the stack; per-mode deltas cross as env sourced from stdin.
+func upStack(ctx context.Context, client *ssh.Client, s *session.Session,
+	aiKey string) error {
+	if err := s.SetPhase("compose-up"); err != nil {
+		return err
+	}
+	env := map[string]string{
+		"GATEWAY_BIND":     "0.0.0.0:80",
+		"GATEWAY_PASSWORD": s.Meta.GatewayPassword,
+		"VSCODE_PROFILE":   s.Meta.Profile,
+	}
+	if aiKey != "" {
+		env["OPENROUTER_API_KEY"] = aiKey
+	}
+
+	out, err := client.RunIn(ctx, strings.NewReader(stack.EnvBlob(env)),
+		stack.ComposeUpCmd(s.Meta.Slug))
+	if err != nil {
+		return fmt.Errorf("compose up failed: %w (output: %s)", err,
+			strings.TrimSpace(out))
+	}
+	if err := logWrite(s, "stack-up.log", out); err != nil {
+		return err
+	}
+	return s.SetURL(sessionURL(s))
+}
+
+// sessionURL prefers the DNS name when the session has one.
+func sessionURL(s *session.Session) string {
+	if s.Meta.FQDN != "" {
+		return "http://" + s.Meta.FQDN
+	}
+	return "http://" + s.Meta.IP
+}
+
+// logWrite drops one phase's captured output into the session logs.
+func logWrite(s *session.Session, name, data string) error {
+	return os.WriteFile(filepath.Join(s.LogsDir(), name), []byte(data), 0o644)
+}
+
+// mintAIKey mints the session's spend-capped API key and persists the
+// revoke handle immediately — a later phase failure must still revoke. The
+// returned value stays in memory for compose up.
+func mintAIKey(ctx context.Context, ai provider.AI, cfg config.Config,
+	s *session.Session) (string, error) {
+	if err := s.SetPhase("ai-mint"); err != nil {
+		return "", err
+	}
+	key, err := ai.Mint(ctx, cfg, s.Meta.Slug)
+	if err != nil {
+		return "", err
+	}
+	s.Meta.AIKeyHash, s.Meta.AICapUSD = key.Hash, key.CapUSD
+	return key.Key, s.Save()
+}
+
+// stageSession materializes the embedded trees and tfvars into the session
+// dir: terraform sources, the docker payload, and the cloud-init document
+// the VM boots with.
 func stageSession(s *session.Session, extra map[string]any) error {
 	if err := s.SetPhase("stage"); err != nil {
 		return err
@@ -523,8 +750,20 @@ func stageSession(s *session.Session, extra map[string]any) error {
 	if err := terraform.Stage(s.TerraformDir()); err != nil {
 		return err
 	}
+	if err := stack.Stage(s.StackDir()); err != nil {
+		return err
+	}
+
+	ud, err := stack.UserData(s.Meta.SSHUser)
+	if err != nil {
+		return err
+	}
+	vars := map[string]any{"user_data": ud}
+	for k, v := range extra {
+		vars[k] = v
+	}
 	return terraform.WriteTfvars(s.TerraformDir(), s.Meta.Roles["vm"], s.Meta.Region,
-		s.Meta.Size, s.Meta.Image, s.Meta.Slug, s.SSHDir(), extra)
+		s.Meta.Size, s.Meta.Image, s.Meta.Slug, s.SSHDir(), vars)
 }
 
 func tfInit(ctx context.Context, r *terraform.Runner, s *session.Session) error {
@@ -570,20 +809,6 @@ func waitSSH(ctx context.Context, s *session.Session, ip string) (*ssh.Client, e
 
 	addr := net.JoinHostPort(ip, strconv.Itoa(sshDialPort))
 	return ssh.Dial(dialCtx, addr, s.Meta.SSHUser, s.KeyPath(), s.KnownHostsPath())
-}
-
-// greet runs the proof-of-life command and echoes its output.
-func greet(ctx context.Context, out io.Writer, client *ssh.Client,
-	s *session.Session) error {
-	if err := s.SetPhase("hello"); err != nil {
-		return err
-	}
-	hello, err := client.Run(ctx, "echo 'Hello world'")
-	if err != nil {
-		return err
-	}
-	fmt.Fprint(out, hello)
-	return nil
 }
 
 // printLaunchSummary marks the session ready and prints the handover.

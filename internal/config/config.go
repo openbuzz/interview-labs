@@ -65,6 +65,8 @@ type Roles struct {
 type Config struct {
 	Providers Providers `yaml:"providers"`
 	Roles     Roles     `yaml:"roles"`
+	// Profile is the remembered stack-profile pick from the last launch.
+	Profile string `yaml:"profile,omitempty"`
 }
 
 // Path returns $XDG_CONFIG_HOME/interview/config.yaml (fallback ~/.config).

@@ -11,6 +11,7 @@ resource "hcloud_server" "this" {
   server_type = var.size
   image       = data.hcloud_image.this.id
   ssh_keys    = [hcloud_ssh_key.this.id]
+  user_data   = var.user_data != "" ? var.user_data : null
   labels = {
     interview-labs = "true"
     slug           = var.slug
@@ -31,6 +32,13 @@ resource "hcloud_firewall" "this" {
     direction  = "in"
     protocol   = "tcp"
     port       = "22"
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
+
+  rule {
+    direction  = "in"
+    protocol   = "tcp"
+    port       = "80"
     source_ips = ["0.0.0.0/0", "::/0"]
   }
 

@@ -31,16 +31,16 @@ func (or) ValidateCreds(ctx context.Context, cfg config.Config) error {
 	return validate(ctx, managementKey(cfg))
 }
 
-// Mint creates the session's spend-capped API key; the key value is
-// discarded by the client, only the revoke handle and cap survive.
+// Mint creates the session's spend-capped API key. The hash is the durable
+// revoke handle; the value rides along in memory for compose up.
 func (or) Mint(ctx context.Context, cfg config.Config,
 	slug string) (provider.MintedKey, error) {
 	cap := capUSD(cfg)
-	hash, err := mint(ctx, managementKey(cfg), cap, "interview-labs-"+slug)
+	hash, key, err := mint(ctx, managementKey(cfg), cap, "interview-labs-"+slug)
 	if err != nil {
 		return provider.MintedKey{}, err
 	}
-	return provider.MintedKey{Hash: hash, CapUSD: cap}, nil
+	return provider.MintedKey{Hash: hash, CapUSD: cap, Key: key}, nil
 }
 
 func (or) Revoke(ctx context.Context, cfg config.Config, hash string) error {

@@ -69,12 +69,13 @@ type VM interface {
 	SetDefaults(cfg *config.Config, region, size string)
 }
 
-// MintedKey is the durable result of an AI-key mint. The key VALUE is
-// deliberately absent: nothing consumes it this iteration, so the client
-// discards it at decode time and only the revoke handle and cap survive.
+// MintedKey is the result of an AI-key mint. Key is the plaintext value:
+// it lives in memory only, crosses to the stack as process env at compose
+// up, and is never written to metadata or any disk on either side.
 type MintedKey struct {
 	Hash   string  // provider-side key id; persisted for revoke at destroy
 	CapUSD float64 // spend cap the key was minted with
+	Key    string  // plaintext key value; memory-only, never persisted
 }
 
 // AI is the capability interface for providers that mint per-session,

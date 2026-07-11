@@ -49,7 +49,7 @@ func TestValidateAccepts2xxRejectsAuth(t *testing.T) {
 	}
 }
 
-func TestMintReturnsHashDiscardsKey(t *testing.T) {
+func TestMintReturnsHashAndKey(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -65,12 +65,15 @@ func TestMintReturnsHashDiscardsKey(t *testing.T) {
 	defer srv.Close()
 	swapBase(t, srv.URL)
 
-	hash, err := mint(context.Background(), "mk", 10, "interview-labs-calm-otter")
+	hash, key, err := mint(context.Background(), "mk", 10, "interview-labs-calm-otter")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hash != "hash-1" {
 		t.Fatalf("hash = %q", hash)
+	}
+	if key != "sk-or-child" {
+		t.Errorf("minted key value = %q, want sk-or-child", key)
 	}
 	if gotBody["name"] != "interview-labs-calm-otter" || gotBody["limit"] != float64(10) {
 		t.Fatalf("mint body = %v", gotBody)
@@ -85,7 +88,7 @@ func TestMintMissingHashErrors(t *testing.T) {
 	defer srv.Close()
 	swapBase(t, srv.URL)
 
-	if _, err := mint(context.Background(), "mk", 10, "x"); err == nil {
+	if _, _, err := mint(context.Background(), "mk", 10, "x"); err == nil {
 		t.Fatal("hash-less response accepted")
 	}
 }
