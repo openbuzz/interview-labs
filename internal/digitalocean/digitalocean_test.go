@@ -56,28 +56,69 @@ func TestRegionsFiltersUnavailable(t *testing.T) {
 	}
 }
 
-func TestSizesForRegionSorted(t *testing.T) {
+func TestSizesForFamilyAndMemoryFilter(t *testing.T) {
 	c := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"sizes":[
-		  {"slug":"s-2vcpu-4gb","available":true,"regions":["fra1"],
-		   "price_monthly":24.0,"price_hourly":0.02976,"memory":4096,"vcpus":2,"disk":80},
-		  {"slug":"s-1vcpu-1gb","available":true,"regions":["fra1","nyc1"],
-		   "price_monthly":6.0,"price_hourly":0.00744,"memory":1024,"vcpus":1,"disk":25},
-		  {"slug":"s-1vcpu-2gb","available":true,"regions":["nyc1"],
-		   "price_monthly":12.0,"memory":2048,"vcpus":1,"disk":50},
-		  {"slug":"gone","available":false,"regions":["fra1"],
-		   "price_monthly":1.0,"memory":512,"vcpus":1,"disk":10}
+		  {"slug":"s-2vcpu-4gb","available":true,"regions":["fra1"],"description":"Basic",
+		   "price_hourly":0.036,"memory":4096,"vcpus":2,"disk":80},
+		  {"slug":"s-2vcpu-4gb-amd","available":true,"regions":["fra1"],
+		   "description":"Premium AMD","price_hourly":0.042,"memory":4096,"vcpus":2,"disk":80},
+		  {"slug":"g-2vcpu-8gb","available":true,"regions":["fra1"],
+		   "description":"General Purpose","price_hourly":0.0938,"memory":8192,"vcpus":2,
+		   "disk":25},
+		  {"slug":"gd-2vcpu-8gb","available":true,"regions":["fra1"],
+		   "description":"General Purpose","price_hourly":0.1094,"memory":8192,"vcpus":2,
+		   "disk":50},
+		  {"slug":"s-1vcpu-2gb","available":true,"regions":["fra1"],"description":"Basic",
+		   "price_hourly":0.018,"memory":2048,"vcpus":1,"disk":50},
+		  {"slug":"s-32vcpu-128gb","available":true,"regions":["fra1"],"description":"Basic",
+		   "price_hourly":1.143,"memory":131072,"vcpus":32,"disk":400},
+		  {"slug":"c-4","available":true,"regions":["fra1"],"description":"CPU-Optimized",
+		   "price_hourly":0.125,"memory":8192,"vcpus":4,"disk":50},
+		  {"slug":"m-2vcpu-16gb","available":true,"regions":["fra1"],
+		   "description":"Memory-Optimized","price_hourly":0.125,"memory":16384,"vcpus":2,
+		   "disk":50},
+		  {"slug":"s-4vcpu-8gb","available":true,"regions":["nyc1"],"description":"Basic",
+		   "price_hourly":0.071,"memory":8192,"vcpus":4,"disk":160},
+		  {"slug":"gone","available":false,"regions":["fra1"],"description":"Basic",
+		   "price_hourly":0.01,"memory":4096,"vcpus":1,"disk":10}
 		]}`))
 	}))
 	got, err := SizesFor(context.Background(), c, "fra1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Slug != "s-1vcpu-1gb" || got[1].Slug != "s-2vcpu-4gb" {
-		t.Fatalf("SizesFor() = %+v", got)
+
+	// Survivors: s-/g-/gd- families, 4 <= mem GB <= 64, available, in region.
+	want := []string{"s-2vcpu-4gb", "s-2vcpu-4gb-amd", "g-2vcpu-8gb", "gd-2vcpu-8gb"}
+	if len(got) != len(want) {
+		t.Fatalf("SizesFor() returned %d sizes: %+v", len(got), got)
 	}
-	if got[0].PriceHourly != 0.00744 {
-		t.Fatalf("PriceHourly = %v, want 0.00744", got[0].PriceHourly)
+	for i, slug := range want {
+		if got[i].Slug != slug {
+			t.Fatalf("got[%d].Slug = %q, want %q", i, got[i].Slug, slug)
+		}
+	}
+	if got[0].Description != "Basic" || got[2].Description != "General Purpose" {
+		t.Fatalf("descriptions not carried: %+v", got)
+	}
+}
+
+func TestSizesForMemoryBoundsInclusive(t *testing.T) {
+	c := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"sizes":[
+		  {"slug":"s-2vcpu-4gb","available":true,"regions":["fra1"],"description":"Basic",
+		   "price_hourly":0.036,"memory":4096,"vcpus":2,"disk":80},
+		  {"slug":"s-16vcpu-64gb","available":true,"regions":["fra1"],"description":"Basic",
+		   "price_hourly":0.571,"memory":65536,"vcpus":16,"disk":800}
+		]}`))
+	}))
+	got, err := SizesFor(context.Background(), c, "fra1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("4 GB and 64 GB rows must both survive: %+v", got)
 	}
 }
 

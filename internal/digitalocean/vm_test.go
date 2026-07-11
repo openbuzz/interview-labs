@@ -46,13 +46,20 @@ func TestDefaultsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSizeLabelShowsHourly(t *testing.T) {
-	got := sizeLabel(Size{
-		Slug: "s-1vcpu-1gb", VCPUs: 1, Memory: 1024, Disk: 25,
-		PriceHourly: 0.00744, PriceMonthly: 5,
+func TestToSizeInfo(t *testing.T) {
+	got := toSizeInfo(Size{
+		Slug: "s-2vcpu-4gb", Description: "Basic", VCPUs: 2, Memory: 4096, Disk: 80,
+		PriceHourly: 0.036,
 	})
-	want := "s-1vcpu-1gb  1vcpu 1024MB 25GB  $0.007/hr ($5/mo)"
+	want := provider.SizeInfo{
+		Slug: "s-2vcpu-4gb", Category: "Basic", VCPUs: 2, MemGB: 4, DiskGB: 80,
+		Hourly: 0.036, Currency: "$",
+	}
 	if got != want {
-		t.Fatalf("label = %q, want %q", got, want)
+		t.Fatalf("toSizeInfo() = %+v, want %+v", got, want)
+	}
+
+	if got := toSizeInfo(Size{Memory: 4097}).MemGB; got != 5 {
+		t.Fatalf("MemGB round-up for 4097 MB = %d, want 5", got)
 	}
 }

@@ -1,4 +1,5 @@
-┃ Session
+┃ Select a session to destroy
+┃ Tears down the cloud resources and archives logs. Stops billing.
 ┃ > brave-fox-a1b2  fra1  ready
 ┃   calm-owl-c3d4  fra1  ready
 

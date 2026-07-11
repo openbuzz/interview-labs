@@ -42,6 +42,13 @@ var verbose bool
 // terminal, not overridden by --verbose. Pipes and CI always stream.
 func quietOutput() bool { return isTTY() && !verbose }
 
+// printNarrowWarning surfaces the once-per-process narrow-terminal warning.
+func printNarrowWarning(out io.Writer) {
+	if w := ui.NarrowWarning(); w != "" {
+		fmt.Fprintln(out, w)
+	}
+}
+
 const actionExit = "exit"
 
 // pickMainAction is a seam; production shows the main menu.
@@ -57,10 +64,9 @@ var pickMainAction = func() (string, error) {
 	}
 
 	var sel string
-	err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("What do you want to do?").
-			Options(opts...).Value(&sel),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run()
+	err := ui.SelectForm("What do you want to do?",
+		"One disposable VM per interview. Arrows move, Enter selects, ESC exits.",
+		opts, &sel)
 	if errors.Is(err, huh.ErrUserAborted) {
 		return actionExit, nil // ESC behaves like Exit
 	}
@@ -112,6 +118,7 @@ Start with "interview doctor", then "interview init".`,
 				return cmd.Help()
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), ui.Logo())
+			printNarrowWarning(cmd.OutOrStdout())
 
 			for {
 				action, err := pickMainAction()

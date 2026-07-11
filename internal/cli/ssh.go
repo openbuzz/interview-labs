@@ -14,8 +14,9 @@ import (
 	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
-// resolveSession picks a session by ref, sole-session default, or picker.
-func resolveSession(ref string) (*session.Session, error) {
+// resolveSession picks a session by ref, sole-session default, or picker;
+// title and desc caption the picker for the calling command.
+func resolveSession(ref, title, desc string) (*session.Session, error) {
 	if ref != "" {
 		return session.Get(ref)
 	}
@@ -32,13 +33,13 @@ func resolveSession(ref string) (*session.Session, error) {
 	if !isTTY() {
 		return nil, usageError("several sessions — name one: interview <cmd> <slug>")
 	}
-	return pickSession(all)
+	return pickSession(all, title, desc)
 }
 
 // pickSession is a seam; production shows a huh select.
-var pickSession = func(all []*session.Session) (*session.Session, error) {
-	// implemented with huh in this file; tests replace the var
-	return huhPickSession(all)
+var pickSession = func(all []*session.Session,
+	title, desc string) (*session.Session, error) {
+	return huhPickSession(all, title, desc)
 }
 
 // execSSH is a seam; production replaces the process with host ssh.
@@ -62,11 +63,13 @@ pinned host key (per-session known_hosts). With several sessions, pass a
 slug or pick one from the menu.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			printNarrowWarning(cmd.OutOrStdout())
 			ref := ""
 			if len(args) == 1 {
 				ref = args[0]
 			}
-			s, err := resolveSession(ref)
+			s, err := resolveSession(ref, "Select a session",
+				"Opens an interactive shell on the session VM.")
 			if err != nil {
 				return err
 			}
@@ -80,7 +83,8 @@ slug or pick one from the menu.`,
 	}
 }
 
-func huhPickSession(all []*session.Session) (*session.Session, error) {
+func huhPickSession(all []*session.Session,
+	title, desc string) (*session.Session, error) {
 	opts := make([]huh.Option[string], 0, len(all))
 	for _, s := range all {
 		opts = append(opts, huh.NewOption(
@@ -88,9 +92,7 @@ func huhPickSession(all []*session.Session) (*session.Session, error) {
 			s.Meta.Slug))
 	}
 	var slug string
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Session").Options(opts...).Value(&slug),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
+	if err := ui.SelectForm(title, desc, opts, &slug); err != nil {
 		return nil, err
 	}
 	return session.Get(slug)

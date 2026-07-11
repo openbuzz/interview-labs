@@ -43,10 +43,10 @@ var pickInitAction = func(all []provider.Provider,
 	opts = append(opts, huh.NewOption("Exit", exit))
 
 	var sel string
-	err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Select a provider to configure:").
-			Options(opts...).Value(&sel),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run()
+	err := ui.SelectForm("Select a provider to configure",
+		"Credentials are validated live and stored in the config file (0600). "+
+			"Re-run any time.",
+		opts, &sel)
 	if errors.Is(err, huh.ErrUserAborted) {
 		return nil, nil // ESC or Ctrl-C at the menu behaves like Exit
 	}
@@ -81,6 +81,7 @@ init any time to add or update providers.`,
 						"AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)", p))
 			}
 			fmt.Fprintln(out, ui.Logo())
+			printNarrowWarning(out)
 
 			cfg, err := config.Load()
 			if err != nil {

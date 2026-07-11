@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"math"
 	"strconv"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
@@ -55,59 +55,60 @@ func Locations(ctx context.Context, c *hcloud.Client) ([]provider.Option, error)
 	return out, nil
 }
 
-// ServerTypesFor lists non-deprecated server types priced in location,
-// cheapest first, labeled with net EUR prices.
+// ServerTypesFor lists non-deprecated x86 shared and dedicated types priced
+// in location, within the 4–64 GB memory window, in API order.
 func ServerTypesFor(ctx context.Context, c *hcloud.Client,
-	location string) ([]provider.Option, error) {
+	location string) ([]provider.SizeInfo, error) {
 	types, err := c.ServerType.All(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	type row struct {
-		opt    provider.Option
-		hourly float64
-	}
-	var rows []row
+	var out []provider.SizeInfo
 	for _, st := range types {
 		// amd64-only policy: deprecated and ARM (cax) types are not offered.
 		if st.IsDeprecated() || st.Architecture != hcloud.ArchitectureX86 {
 			continue
 		}
-		hourly, monthly, ok := priceIn(st, location)
+		if st.Memory < 4 || st.Memory > 64 {
+			continue
+		}
+		hourly, ok := priceIn(st, location)
 		if !ok {
 			continue
 		}
-		rows = append(rows, row{
-			hourly: hourly,
-			opt: provider.Option{
-				Slug: st.Name,
-				Label: fmt.Sprintf("%s  %dvcpu %.0fGB %dGB  €%.3f/hr (€%.0f/mo)",
-					st.Name, st.Cores, st.Memory, st.Disk, hourly, monthly),
-			},
+		out = append(out, provider.SizeInfo{
+			Slug:     st.Name,
+			Category: category(st.CPUType),
+			VCPUs:    st.Cores,
+			MemGB:    int(math.Ceil(float64(st.Memory))),
+			DiskGB:   st.Disk,
+			Hourly:   hourly,
+			Currency: "€",
 		})
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].hourly < rows[j].hourly })
-
-	out := make([]provider.Option, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r.opt)
 	}
 	return out, nil
 }
 
-// priceIn extracts the net hourly/monthly EUR price of st in location.
-func priceIn(st *hcloud.ServerType, location string) (float64, float64, bool) {
+// category maps hcloud's CPU type to the picker's category column.
+func category(t hcloud.CPUType) string {
+	if t == hcloud.CPUTypeDedicated {
+		return "Dedicated"
+	}
+	return "Shared"
+}
+
+// priceIn extracts the net hourly EUR price of st in location.
+func priceIn(st *hcloud.ServerType, location string) (float64, bool) {
 	for _, p := range st.Pricings {
 		if p.Location == nil || p.Location.Name != location {
 			continue
 		}
-		h, errH := strconv.ParseFloat(p.Hourly.Net, 64)
-		m, errM := strconv.ParseFloat(p.Monthly.Net, 64)
-		if errH != nil || errM != nil {
-			return 0, 0, false
+		h, err := strconv.ParseFloat(p.Hourly.Net, 64)
+		if err != nil {
+			return 0, false
 		}
-		return h, m, true
+		return h, true
 	}
-	return 0, 0, false
+	return 0, false
 }

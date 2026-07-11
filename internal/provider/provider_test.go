@@ -53,7 +53,7 @@ func (fakeVM) ValidateCreds(context.Context, config.Config) error { return nil }
 func (fakeVM) Regions(context.Context, config.Config) ([]Option, error) {
 	return []Option{{Slug: "r1", Label: "r1  Region"}}, nil
 }
-func (fakeVM) Sizes(context.Context, config.Config, string) ([]Option, error) {
+func (fakeVM) Sizes(context.Context, config.Config, string) ([]SizeInfo, error) {
 	return nil, nil
 }
 func (fakeVM) Defaults(config.Config) (string, string)    { return "", "" }

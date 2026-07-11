@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,40 +26,97 @@ import (
 // sshDialPort is a seam: production 22, tests point it at a local server.
 var sshDialPort = 22
 
-// pickRegionSize is a seam: production drives huh selects over the
-// provider's live region and size lists.
-var pickRegionSize = func(ctx context.Context, vm provider.VM,
-	cfg config.Config) (string, string, error) {
+// pickRegionForm / pickSizeForm are seams; production runs huh selects.
+var pickRegionForm = func(opts []huh.Option[string], preselect string) (string, error) {
+	sel := preselect
+	err := ui.SelectForm("Select a region",
+		"Pick one geographically close to your candidate — lower latency for their shell.",
+		opts, &sel)
+	return sel, err
+}
+
+var pickSizeForm = func(opts []huh.Option[string], preselect string) (string, error) {
+	sel := preselect
+	err := ui.SelectForm("Select an instance size",
+		"Hourly billing runs from launch until destroy. ESC goes back to region.",
+		opts, &sel)
+	return sel, err
+}
+
+// pickRegionSize is a seam; production loops region -> size, where ESC at
+// the size step or an empty size list returns to the region step.
+var pickRegionSize = func(ctx context.Context, out io.Writer, vm provider.VM,
+	cfg config.Config) (provider.Option, provider.SizeInfo, error) {
 	regions, err := vm.Regions(ctx, cfg)
 	if err != nil {
-		return "", "", err
+		return provider.Option{}, provider.SizeInfo{}, err
 	}
-
-	region, size := vm.Defaults(cfg)
 	regionOpts := make([]huh.Option[string], 0, len(regions))
 	for _, r := range regions {
 		regionOpts = append(regionOpts, huh.NewOption(r.Label, r.Slug))
 	}
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Region").Options(regionOpts...).Value(&region),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
-		return "", "", err
-	}
+	defRegion, defSize := vm.Defaults(cfg)
 
+	for {
+		regionSlug, err := pickRegionForm(regionOpts, defRegion)
+		if err != nil {
+			return provider.Option{}, provider.SizeInfo{}, err
+		}
+		defRegion = regionSlug
+
+		sizeOpts, bySlug, err := sizeOptions(ctx, vm, cfg, regionSlug)
+		if err != nil {
+			return provider.Option{}, provider.SizeInfo{}, err
+		}
+		if len(sizeOpts) == 0 {
+			fmt.Fprintln(out, ui.RowWarn(regionSlug,
+				"no matching sizes — pick another region"))
+			continue
+		}
+
+		sizeSlug, err := pickSizeForm(sizeOpts, defSize)
+		if errors.Is(err, huh.ErrUserAborted) {
+			continue // ESC at size: back to the region step
+		}
+		if err != nil {
+			return provider.Option{}, provider.SizeInfo{}, err
+		}
+		return regionBySlug(regions, regionSlug), bySlug[sizeSlug], nil
+	}
+}
+
+// sizeOptions fetches, sorts (cheapest hourly, slug tie-break) and labels
+// the sizes of one region.
+func sizeOptions(ctx context.Context, vm provider.VM, cfg config.Config,
+	region string) ([]huh.Option[string], map[string]provider.SizeInfo, error) {
 	sizes, err := vm.Sizes(ctx, cfg, region)
 	if err != nil {
-		return "", "", err
+		return nil, nil, err
 	}
-	sizeOpts := make([]huh.Option[string], 0, len(sizes))
+	sort.Slice(sizes, func(i, j int) bool {
+		if sizes[i].Hourly != sizes[j].Hourly {
+			return sizes[i].Hourly < sizes[j].Hourly
+		}
+		return sizes[i].Slug < sizes[j].Slug
+	})
+
+	opts := make([]huh.Option[string], 0, len(sizes))
+	bySlug := make(map[string]provider.SizeInfo, len(sizes))
 	for _, s := range sizes {
-		sizeOpts = append(sizeOpts, huh.NewOption(s.Label, s.Slug))
+		opts = append(opts, huh.NewOption(ui.SizeLabel(s), s.Slug))
+		bySlug[s.Slug] = s
 	}
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Size").Options(sizeOpts...).Value(&size),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
-		return "", "", err
+	return opts, bySlug, nil
+}
+
+// regionBySlug returns the picked region option (label included) by slug.
+func regionBySlug(regions []provider.Option, slug string) provider.Option {
+	for _, r := range regions {
+		if r.Slug == slug {
+			return r
+		}
 	}
-	return region, size, nil
+	return provider.Option{Slug: slug, Label: slug}
 }
 
 // pickVMProvider is a seam; production shows a huh select over configured providers.
@@ -67,9 +127,9 @@ var pickVMProvider = func(configured []provider.Provider,
 		opts = append(opts, huh.NewOption(ui.Badge(true)+" "+p.Label(), p.Name()))
 	}
 	sel := preselect
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Provider").Options(opts...).Value(&sel),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run(); err != nil {
+	if err := ui.SelectForm("Select a cloud provider",
+		"Hosts this session's VM. Only configured providers are listed.",
+		opts, &sel); err != nil {
 		return nil, err
 	}
 	for _, p := range configured {
@@ -80,8 +140,17 @@ var pickVMProvider = func(configured []provider.Provider,
 	return configured[0], nil
 }
 
+// confirmLaunch is a seam; production asks the billing gate, Yes focused.
+var confirmLaunch = func() (bool, error) {
+	ok := true
+	err := ui.ConfirmForm(
+		"Cloud resources will be provisioned — billing starts. Continue?", "", &ok)
+	return ok, err
+}
+
 func newLaunchCmd() *cobra.Command {
 	var region, size string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "launch",
 		Short: "deploy a session VM",
@@ -90,57 +159,92 @@ func newLaunchCmd() *cobra.Command {
 Steps: pick a configured provider, a region and an instance size (hourly
 price shown), then terraform applies the session, waits for ssh and
 prints a ready-to-paste ssh line. Selections are remembered and
-preselected next time. Sessions are independent and run in parallel.
+preselected next time. Pass --yes to skip the billing confirmation.
+Sessions are independent and run in parallel.
 
 The VM bills hourly until "interview destroy".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out := cmd.OutOrStdout()
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(out, ui.Logo())
-
-			vm, err := selectVMProvider(out, &cfg)
-			if err != nil {
-				return err
-			}
-			bin, err := terraform.Find()
-			if err != nil {
-				return err
-			}
-			if err := ensureRegionSize(cmd.Context(), vm, &cfg,
-				&region, &size); err != nil {
-				return err
-			}
-
-			s, err := session.New(region, size, vm.Image(), vm.SSHUser(),
-				map[string]string{"vm": vm.Name()},
-				session.TerraformInfo{Binary: bin.Name, Version: bin.Version})
-			if err != nil {
-				return err
-			}
-			release, err := s.Lock()
-			if err != nil {
-				return err
-			}
-			defer release()
-
-			if err := runLaunch(cmd.Context(), out, vm.EnvCreds(cfg), bin, s); err != nil {
-				s.SetStatus(session.StatusFailed)
-				fmt.Fprintf(out, "\n%s\n", ui.RowFail("launch "+s.Meta.Phase, err.Error()))
-				fmt.Fprintf(out, "%s\n", ui.Faint.Render("logs: "+s.LogsDir()))
-				fmt.Fprintln(out, ui.Next("interview destroy "+s.Meta.Slug))
-				return fmt.Errorf("launch failed in phase %s", s.Meta.Phase)
-			}
-			return nil
+			return runLaunchCmd(cmd, &region, &size, yes)
 		},
 	}
 	cmd.Flags().StringVar(&region, "region", "",
 		"provider region slug (e.g. fra1, fsn1, eu-central-1)")
 	cmd.Flags().StringVar(&size, "size", "",
 		"provider size slug (e.g. s-2vcpu-2gb, cx22, m7i.xlarge)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the billing confirmation prompt")
 	return cmd
+}
+
+// runLaunchCmd resolves a provider, region and size, gates on the billing
+// confirm, and drives the launch.
+func runLaunchCmd(cmd *cobra.Command, region, size *string, yes bool) error {
+	out := cmd.OutOrStdout()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, ui.Logo())
+	printNarrowWarning(out)
+
+	vm, err := selectVMProvider(out, &cfg)
+	if err != nil {
+		return err
+	}
+	bin, err := terraform.Find()
+	if err != nil {
+		return err
+	}
+	regionLabel, si, err := ensureRegionSize(cmd.Context(), out, vm, &cfg, region, size)
+	if err != nil {
+		return err
+	}
+	cancelled, err := confirmGate(out, vm, regionLabel, *region, si, *size, yes)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return nil
+	}
+
+	s, err := session.New(*region, *size, vm.Image(), vm.SSHUser(),
+		map[string]string{"vm": vm.Name()},
+		session.TerraformInfo{Binary: bin.Name, Version: bin.Version})
+	if err != nil {
+		return err
+	}
+	release, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	if err := runLaunch(cmd.Context(), out, vm.EnvCreds(cfg), bin, s); err != nil {
+		return failLaunch(out, s, err)
+	}
+	return nil
+}
+
+// confirmGate prints the pre-provision summary on a TTY and, unless --yes,
+// blocks on the billing confirm. cancelled reports a clean decline: RunE
+// returns nil without provisioning.
+func confirmGate(out io.Writer, vm provider.VM, regionLabel, region string,
+	si *provider.SizeInfo, size string, yes bool) (cancelled bool, err error) {
+	if !isTTY() {
+		return false, nil
+	}
+	fmt.Fprintln(out, launchSummaryBox(vm, regionLabel, region, si, size))
+	if yes {
+		return false, nil
+	}
+	ok, err := confirmLaunch()
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		fmt.Fprintln(out, "launch cancelled — nothing provisioned")
+		return true, nil
+	}
+	return false, nil
 }
 
 // selectVMProvider gates on configured providers, picks one on a TTY, and
@@ -180,24 +284,49 @@ func selectVMProvider(out io.Writer, cfg *config.Config) (provider.VM, error) {
 	return vm, nil
 }
 
-// ensureRegionSize fills missing region/size from the interactive pickers and
-// persists the picks as next-launch preselects.
-func ensureRegionSize(ctx context.Context, vm provider.VM, cfg *config.Config,
-	region, size *string) error {
+// ensureRegionSize fills missing region/size from the interactive loop and
+// persists the picks; regionLabel and si are zero on the flags path.
+func ensureRegionSize(ctx context.Context, out io.Writer, vm provider.VM,
+	cfg *config.Config, region, size *string) (string, *provider.SizeInfo, error) {
 	if *region != "" && *size != "" {
-		return nil
+		return "", nil, nil
 	}
 	if !isTTY() {
-		return usageError("launch needs --region and --size when not on a terminal")
+		return "", nil, usageError("launch needs --region and --size when not on a terminal")
 	}
 
-	r, sz, err := pickRegionSize(ctx, vm, *cfg)
+	r, si, err := pickRegionSize(ctx, out, vm, *cfg)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	*region, *size = r, sz
-	vm.SetDefaults(cfg, r, sz)
-	return cfg.Write()
+	*region, *size = r.Slug, si.Slug
+	vm.SetDefaults(cfg, r.Slug, si.Slug)
+	return r.Label, &si, cfg.Write()
+}
+
+// launchSummaryBox renders the pre-provision summary; falls back to raw
+// slugs (and no price row) when the flags path supplied no SizeInfo.
+func launchSummaryBox(vm provider.VM, regionLabel, region string,
+	si *provider.SizeInfo, size string) string {
+	regionRow := regionLabel
+	if regionRow == "" {
+		regionRow = region
+	}
+	sizeRow, rows := size, []string{}
+	if si != nil {
+		sizeRow = fmt.Sprintf("%s — %d vCPU, %d GB memory, %d GB disk",
+			si.Category, si.VCPUs, si.MemGB, si.DiskGB)
+	}
+	rows = append(rows,
+		"Provider   "+vm.Label(),
+		"Region     "+regionRow,
+		"Size       "+sizeRow)
+	if si != nil {
+		price := math.Ceil(si.Hourly*100) / 100
+		rows = append(rows, fmt.Sprintf("Price      ~%s%.2f/h, billed until %q",
+			si.Currency, price, "interview destroy"))
+	}
+	return ui.Box("Launch summary", ui.Accent, rows...)
 }
 
 // step runs one launch/destroy phase: a spinner row when quiet, plain
@@ -355,4 +484,13 @@ func printLaunchSummary(out io.Writer, s *session.Session, ip string) error {
 	fmt.Fprintln(out, ui.Next(
 		"interview ssh "+s.Meta.Slug, "interview destroy "+s.Meta.Slug))
 	return nil
+}
+
+// failLaunch records the failure and prints the recovery hints.
+func failLaunch(out io.Writer, s *session.Session, err error) error {
+	s.SetStatus(session.StatusFailed)
+	fmt.Fprintf(out, "\n%s\n", ui.RowFail("launch "+s.Meta.Phase, err.Error()))
+	fmt.Fprintf(out, "%s\n", ui.Faint.Render("logs: "+s.LogsDir()))
+	fmt.Fprintln(out, ui.Next("interview destroy "+s.Meta.Slug))
+	return fmt.Errorf("launch failed in phase %s", s.Meta.Phase)
 }

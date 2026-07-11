@@ -7,7 +7,7 @@ load 'helpers'
   seed_session "calm-owl-c3d4" "203.0.113.8" "ready" 10
 
   tmux_start "destroy-picker" "$(tui_cmd 'interview destroy')"
-  tmux_wait_for "Session"
+  tmux_wait_for "Select a session to destroy"
 
   tmux_snapshot "destroy-picker"
 

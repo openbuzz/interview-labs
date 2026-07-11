@@ -5,11 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 func fastRetries(t *testing.T) *[]time.Duration {
@@ -87,13 +86,16 @@ func TestRetryStopsOnCancelledContext(t *testing.T) {
 
 func TestTestCredentialsReportsAttempts(t *testing.T) {
 	fastRetries(t)
-	old := ui.Interactive
-	ui.Interactive = func() bool { return false }
-	t.Cleanup(func() { ui.Interactive = old })
 	var buf bytes.Buffer
 	calls := 0
 
-	err := TestCredentials(context.Background(), &buf, func(context.Context) error {
+	// Deterministic step: print the title and every retitle, no spinner.
+	step := func(w io.Writer, title string, fn func(update func(string)) error) error {
+		fmt.Fprintln(w, title)
+		return fn(func(s string) { fmt.Fprintln(w, s) })
+	}
+
+	err := TestCredentials(context.Background(), &buf, step, func(context.Context) error {
 		calls++
 		if calls < 2 {
 			return errors.New("not active yet")

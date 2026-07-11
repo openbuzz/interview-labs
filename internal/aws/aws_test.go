@@ -2,8 +2,6 @@ package aws
 
 import (
 	"context"
-	"fmt"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +9,8 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+
+	"github.com/openbuzz/interview-labs/internal/provider"
 )
 
 func stsClient(t *testing.T, handler http.Handler) *sts.Client {
@@ -63,37 +63,32 @@ func TestInstanceTypesStaticTable(t *testing.T) {
 		t.Fatalf("len = %d, want 16 (4 families x 4 sizes)", len(got))
 	}
 
-	prices := map[string]float64{}
-	for _, o := range got {
-		var vcpu, mem int
-		var price float64
-		var name string
-		_, err := fmt.Sscanf(o.Label, "%s %dvcpu %dGB ~$%f/hr", &name, &vcpu, &mem, &price)
-		if err != nil || name != o.Slug {
-			t.Fatalf("label %q does not parse: %v", o.Label, err)
+	var m5Large *provider.SizeInfo
+	for i, s := range got {
+		if s.Slug == "m5.large" {
+			m5Large = &got[i]
 		}
-		prices[o.Slug] = price
-	}
-
-	// Labels round to whole cents (~$%.2f), so family doubling is asserted
-	// within the compounded rounding tolerance (8x half-cent = 4c).
-	if math.Abs(prices["m7i.xlarge"]-2*prices["m7i.large"]) > 0.05 ||
-		math.Abs(prices["m7i.4xlarge"]-8*prices["m7i.large"]) > 0.05 {
-		t.Fatalf("family prices not doubling: %v", prices)
-	}
-
-	for i := 1; i < len(got); i++ {
-		if prices[got[i].Slug] < prices[got[i-1].Slug] {
-			t.Fatalf("not sorted cheapest first at %s", got[i].Slug)
+		if s.MemGB < 4 || s.MemGB > 64 {
+			t.Fatalf("%s MemGB = %d, want 4 <= MemGB <= 64", s.Slug, s.MemGB)
 		}
+	}
+	if m5Large == nil {
+		t.Fatal("m5.large not found in table")
+	}
+	want := provider.SizeInfo{
+		Slug: "m5.large", Category: "General Purpose", VCPUs: 2, MemGB: 8,
+		DiskGB: 40, Hourly: 0.096, Currency: "$",
+	}
+	if *m5Large != want {
+		t.Fatalf("m5.large = %+v, want %+v", *m5Large, want)
 	}
 }
 
 func TestInstanceTypesX86Only(t *testing.T) {
-	for _, o := range InstanceTypes() {
+	for _, s := range InstanceTypes() {
 		for _, arm := range []string{"m7g", "m8g", "t4g", "c7g"} {
-			if strings.HasPrefix(o.Slug, arm+".") {
-				t.Fatalf("ARM type offered: %s", o.Slug)
+			if strings.HasPrefix(s.Slug, arm+".") {
+				t.Fatalf("ARM type offered: %s", s.Slug)
 			}
 		}
 	}

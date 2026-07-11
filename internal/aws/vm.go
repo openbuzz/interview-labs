@@ -39,7 +39,7 @@ func (aw) Regions(ctx context.Context, cfg config.Config) ([]provider.Option, er
 }
 
 func (aw) Sizes(ctx context.Context, cfg config.Config,
-	region string) ([]provider.Option, error) {
+	region string) ([]provider.SizeInfo, error) {
 	return InstanceTypes(), nil
 }
 

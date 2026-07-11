@@ -2,11 +2,14 @@
 package ui
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/openbuzz/interview-labs/internal/provider"
 	"golang.org/x/term"
 )
 
@@ -26,6 +29,9 @@ const (
 	GlyphFail = "✗"
 	GlyphTodo = "○"
 )
+
+// Width is the standard render width: 68-col wordmark + 2-space margins.
+const Width = 72
 
 const logoArt = `██╗███╗   ██╗████████╗███████╗██████╗ ██╗   ██╗██╗███████╗██╗    ██╗
 ██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗██║   ██║██║██╔════╝██║    ██║
@@ -47,9 +53,9 @@ const logoTagline = "                   one disposable VM per interview"
 func Logo() string {
 	lines := strings.Split(logoArt, "\n")
 	for i, l := range lines {
-		lines[i] = Accent.Bold(true).Render(l)
+		lines[i] = "  " + Accent.Bold(true).Render(l)
 	}
-	return strings.Join(lines, "\n") + "\n\n" + Faint.Render(logoTagline)
+	return strings.Join(lines, "\n") + "\n\n" + "  " + Faint.Render(logoTagline)
 }
 
 // Next renders the NEXT block: full interview commands, one per line.
@@ -82,6 +88,7 @@ func Box(title string, style lipgloss.Style, lines ...string) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(style.GetForeground()).
 		Padding(1, 2).
+		Width(Width - 2).
 		Render(body)
 }
 
@@ -91,6 +98,14 @@ func Badge(configured bool) string {
 		return OK.Render(GlyphOK)
 	}
 	return Faint.Render(GlyphTodo)
+}
+
+// SizeLabel renders one size row: category, specs, ceil'd hourly price
+// (never understates), trailing slug.
+func SizeLabel(s provider.SizeInfo) string {
+	price := math.Ceil(s.Hourly*100) / 100
+	return fmt.Sprintf("%-16s%2d vCPU, %3d GB memory, %3d GB disk   ~%s%.2f/h   %s",
+		s.Category, s.VCPUs, s.MemGB, s.DiskGB, s.Currency, price, s.Slug)
 }
 
 // Theme is the huh theme on the same ANSI palette.
@@ -112,5 +127,53 @@ func FormKeyMap() *huh.KeyMap {
 	return km
 }
 
+// SelectForm runs one single-select with the house theme, keymap, title
+// and faint description. desc may be empty.
+func SelectForm[T comparable](title, desc string,
+	opts []huh.Option[T], value *T) error {
+	return huh.NewForm(huh.NewGroup(
+		huh.NewSelect[T]().Title(title).Description(desc).
+			Options(opts...).Value(value),
+	)).WithTheme(Theme()).WithKeyMap(FormKeyMap()).Run()
+}
+
+// ConfirmForm runs one confirm with the house theme and keymap; the
+// initial *value picks the focused button (true focuses Yes).
+func ConfirmForm(title, desc string, value *bool) error {
+	return huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().Title(title).Description(desc).Value(value),
+	)).WithTheme(Theme()).WithKeyMap(FormKeyMap()).Run()
+}
+
 // Interactive is a seam: whether stdout can host live redraw (spinners).
 var Interactive = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+
+// termWidth is a seam: stdout's column count, 0 when unknown.
+var termWidth = func() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		return 0
+	}
+	return w
+}
+
+var warnedNarrow bool
+
+// ResetNarrowWarning re-arms the once-per-process narrow-terminal warning.
+func ResetNarrowWarning() { warnedNarrow = false }
+
+// NarrowWarning returns one warn row when the terminal is narrower than
+// Width; empty on wide terminals, non-TTYs, and after the first call.
+func NarrowWarning() string {
+	if warnedNarrow || !Interactive() {
+		return ""
+	}
+	w := termWidth()
+	if w == 0 || w >= Width {
+		return ""
+	}
+
+	warnedNarrow = true
+	return Warn.Render(GlyphWarn) + fmt.Sprintf(
+		" terminal is %d columns; interview renders at %d — expect wrapped output", w, Width)
+}

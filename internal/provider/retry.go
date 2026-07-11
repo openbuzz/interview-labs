@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"time"
-
-	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 // RetryDelays are the sleeps between credential-validation attempts: fresh
@@ -49,12 +47,14 @@ func Retry(ctx context.Context, onAttempt func(attempt, total int),
 }
 
 // TestCredentials reports a credential validation run on out: banner, spinner
-// step with attempt retitling, resolved status row.
+// step with attempt retitling, resolved status row. step renders the spinner
+// (ui.Step in production; injected so provider doesn't import ui).
 func TestCredentials(ctx context.Context, out io.Writer,
+	step func(io.Writer, string, func(update func(string)) error) error,
 	fn func(context.Context) error) error {
 	fmt.Fprintln(out, "Testing credentials…")
 
-	return ui.Step(out, "validating credentials", func(update func(string)) error {
+	return step(out, "validating credentials", func(update func(string)) error {
 		return Retry(ctx, func(attempt, total int) {
 			if attempt > 1 {
 				update(fmt.Sprintf("validating credentials (attempt %d/%d)",

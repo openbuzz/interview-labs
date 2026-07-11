@@ -29,12 +29,22 @@ type Provider interface {
 	Configure(ctx context.Context, cfg *config.Config) error
 }
 
-// Option is one pickable region or size: Slug is the value handed to
-// terraform, Label the display row (provider-formatted, price included
-// where the API offers one).
+// Option is one pickable region: Slug is the value handed to terraform,
+// Label the display row.
 type Option struct {
 	Slug  string
 	Label string
+}
+
+// SizeInfo is one pickable instance size; the CLI owns sort and rendering.
+type SizeInfo struct {
+	Slug     string
+	Category string // DO: API description; Hetzner: Shared|Dedicated; AWS: General Purpose
+	VCPUs    int
+	MemGB    int // provider memory rounded up to whole GB
+	DiskGB   int
+	Hourly   float64 // provider-native currency, net where the API distinguishes
+	Currency string  // "$" or "€"
 }
 
 // VM is the capability interface for providers that can host a session VM.
@@ -52,7 +62,7 @@ type VM interface {
 	// ValidateCreds performs one cheap authenticated read.
 	ValidateCreds(ctx context.Context, cfg config.Config) error
 	Regions(ctx context.Context, cfg config.Config) ([]Option, error)
-	Sizes(ctx context.Context, cfg config.Config, region string) ([]Option, error)
+	Sizes(ctx context.Context, cfg config.Config, region string) ([]SizeInfo, error)
 	// Defaults returns the persisted launch preselects.
 	Defaults(cfg config.Config) (region, size string)
 	// SetDefaults records the operator's picks; the caller persists cfg.

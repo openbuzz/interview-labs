@@ -95,7 +95,7 @@ func (aw) Configure(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	if err := provider.TestCredentials(ctx, out, func(ctx context.Context) error {
+	if err := provider.TestCredentials(ctx, out, ui.Step, func(ctx context.Context) error {
 		return validatePair(ctx, keyID, secret)
 	}); err != nil {
 		fmt.Fprintln(out, ui.RowFail("credentials",

@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
+	"strings"
 
 	"github.com/digitalocean/godo"
 	"golang.org/x/oauth2"
@@ -44,6 +44,7 @@ type Region struct {
 // Size is a selectable droplet size.
 type Size struct {
 	Slug         string
+	Description  string
 	PriceHourly  float64
 	PriceMonthly float64
 	Memory       int
@@ -67,7 +68,8 @@ func Regions(ctx context.Context, c *godo.Client) ([]Region, error) {
 	return out, nil
 }
 
-// SizesFor lists available sizes offered in region, cheapest first.
+// SizesFor lists sizes offered in region: shared and general-purpose
+// families (s-, g-, gd-) within the 4–64 GB memory window, in API order.
 func SizesFor(ctx context.Context, c *godo.Client, region string) ([]Size, error) {
 	all, _, err := c.Sizes.List(ctx, &godo.ListOptions{PerPage: 200})
 	if err != nil {
@@ -79,8 +81,12 @@ func SizesFor(ctx context.Context, c *godo.Client, region string) ([]Size, error
 		if !s.Available || !contains(s.Regions, region) {
 			continue
 		}
+		if !generalPurpose(s.Slug) || s.Memory < 4096 || s.Memory > 65536 {
+			continue
+		}
 		out = append(out, Size{
 			Slug:         s.Slug,
+			Description:  s.Description,
 			PriceHourly:  s.PriceHourly,
 			PriceMonthly: s.PriceMonthly,
 			Memory:       s.Memory,
@@ -88,8 +94,14 @@ func SizesFor(ctx context.Context, c *godo.Client, region string) ([]Size, error
 			Disk:         s.Disk,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].PriceMonthly < out[j].PriceMonthly })
 	return out, nil
+}
+
+// generalPurpose reports whether slug is a shared (s-) or general-purpose
+// dedicated (g-, gd-) droplet family.
+func generalPurpose(slug string) bool {
+	return strings.HasPrefix(slug, "s-") || strings.HasPrefix(slug, "g-") ||
+		strings.HasPrefix(slug, "gd-")
 }
 
 func contains(list []string, want string) bool {

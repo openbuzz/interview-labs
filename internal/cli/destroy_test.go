@@ -61,6 +61,39 @@ func TestDestroySoleSessionWithYes(t *testing.T) {
 	}
 }
 
+// TestDestroyMultipleSessionsUsesPickerWithTitle pins the title/desc thread:
+// with 2+ sessions on a TTY, destroy must route through pickSession with its
+// own copy, not ssh's.
+func TestDestroyMultipleSessionsUsesPickerWithTitle(t *testing.T) {
+	destroySetup(t)
+	s2, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64", "root",
+		map[string]string{"vm": "digitalocean"},
+		session.TerraformInfo{Binary: "terraform", Version: "1.9.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	swapTTY(t, true)
+
+	var sawTitle, sawDesc string
+	oldPick := pickSession
+	pickSession = func(all []*session.Session, title, desc string) (*session.Session, error) {
+		sawTitle, sawDesc = title, desc
+		return s2, nil
+	}
+	t.Cleanup(func() { pickSession = oldPick })
+
+	out, code := runCmd(t, "destroy", "--yes")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if sawTitle != "Select a session to destroy" {
+		t.Fatalf("picker title = %q", sawTitle)
+	}
+	if sawDesc != "Tears down the cloud resources and archives logs. Stops billing." {
+		t.Fatalf("picker desc = %q", sawDesc)
+	}
+}
+
 func TestDestroyNoSessionsErrors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

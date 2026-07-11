@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -85,37 +84,23 @@ var sizeSteps = []struct {
 	{"4xlarge", 8, 16, 64},
 }
 
-// InstanceTypes is the curated x86 menu (amd64-only policy), cheapest first.
-// A static table: no EC2 API call, no ec2:Describe* permissions needed.
-func InstanceTypes() []provider.Option {
-	type row struct {
-		slug   string
-		hourly float64
-		label  string
-	}
-	rows := make([]row, 0, len(familyBaseHourly)*len(sizeSteps))
+// InstanceTypes is the curated x86 general-purpose menu (amd64-only
+// policy) as a static table: no EC2 API call, no ec2:Describe* needed.
+// DiskGB is the fixed gp3 root volume from terraform/aws/main.tf.
+func InstanceTypes() []provider.SizeInfo {
+	out := make([]provider.SizeInfo, 0, len(familyBaseHourly)*len(sizeSteps))
 	for fam, base := range familyBaseHourly {
 		for _, s := range sizeSteps {
-			slug := fam + "." + s.suffix
-			hourly := base * float64(s.mult)
-			rows = append(rows, row{
-				slug:   slug,
-				hourly: hourly,
-				label: fmt.Sprintf("%s  %dvcpu %dGB  ~$%.2f/hr",
-					slug, s.vcpus, s.memGiB, hourly),
+			out = append(out, provider.SizeInfo{
+				Slug:     fam + "." + s.suffix,
+				Category: "General Purpose",
+				VCPUs:    s.vcpus,
+				MemGB:    s.memGiB,
+				DiskGB:   40,
+				Hourly:   base * float64(s.mult),
+				Currency: "$",
 			})
 		}
-	}
-
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].hourly != rows[j].hourly {
-			return rows[i].hourly < rows[j].hourly
-		}
-		return rows[i].slug < rows[j].slug
-	})
-	out := make([]provider.Option, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, provider.Option{Slug: r.slug, Label: r.label})
 	}
 	return out
 }

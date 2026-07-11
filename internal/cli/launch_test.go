@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/huh"
 
 	"github.com/openbuzz/interview-labs/internal/config"
 	"github.com/openbuzz/interview-labs/internal/provider"
@@ -207,9 +212,9 @@ func TestLaunchPersistsProviderPick(t *testing.T) {
 	// Make the run stop right after the pick: leave pickRegionSize failing fast.
 	oldRS := pickRegionSize
 	t.Cleanup(func() { pickRegionSize = oldRS })
-	pickRegionSize = func(ctx context.Context, vm provider.VM,
-		cfg config.Config) (string, string, error) {
-		return "", "", fmt.Errorf("stop here")
+	pickRegionSize = func(_ context.Context, _ io.Writer, _ provider.VM,
+		_ config.Config) (provider.Option, provider.SizeInfo, error) {
+		return provider.Option{}, provider.SizeInfo{}, fmt.Errorf("stop here")
 	}
 
 	_, _ = runCmd(t, "launch")
@@ -239,10 +244,11 @@ func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 		return configured[0], nil
 	}
 	var sawPreRegion, sawPreInstance string
-	pickRegionSize = func(_ context.Context, vm provider.VM,
-		cfg config.Config) (string, string, error) {
+	pickRegionSize = func(_ context.Context, _ io.Writer, vm provider.VM,
+		cfg config.Config) (provider.Option, provider.SizeInfo, error) {
 		sawPreRegion, sawPreInstance = vm.Defaults(cfg)
-		return "fra1", "s-1vcpu-1gb", nil
+		return provider.Option{Slug: "fra1", Label: "fra1  Frankfurt 1"},
+			provider.SizeInfo{Slug: "s-1vcpu-1gb"}, nil
 	}
 	// Use the file's existing fake-terraform PATH helper so terraform.Find
 	// succeeds; the run may fail later — assert persisted config regardless.
@@ -379,7 +385,9 @@ func TestLaunchQuietRendersPhaseRows(t *testing.T) {
 	sshDialPort = port
 	t.Cleanup(func() { sshDialPort = oldPort })
 
-	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	// --yes: this test is about phase rows, not the confirm gate; skip it
+	// like the real huh picker above, same reason.
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb", "--yes")
 
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
@@ -417,13 +425,295 @@ func TestLaunchVerboseStreamsTerraform(t *testing.T) {
 	sshDialPort = port
 	t.Cleanup(func() { sshDialPort = oldPort })
 
+	// --yes: this test is about verbose streaming, not the confirm gate;
+	// skip it like the real huh picker above, same reason.
 	out, code := runCmd(t, "--verbose", "launch",
-		"--region", "fra1", "--size", "s-1vcpu-1gb")
+		"--region", "fra1", "--size", "s-1vcpu-1gb", "--yes")
 
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
 	if strings.Contains(out, ui.GlyphOK+" terraform apply") {
 		t.Fatalf("verbose mode rendered quiet rows:\n%s", out)
+	}
+}
+
+// loopVM is a minimal provider.VM fake for the region/size loop tests; only
+// Regions, Sizes and Defaults return real data.
+type loopVM struct {
+	regions []provider.Option
+	sizes   map[string][]provider.SizeInfo
+}
+
+func (v loopVM) Name() string  { return "loopvm" }
+func (v loopVM) Label() string { return "LoopVM" }
+func (v loopVM) Roles() []provider.Role {
+	return []provider.Role{provider.RoleVM}
+}
+func (v loopVM) Configured(config.Config) bool                      { return true }
+func (v loopVM) Configure(context.Context, *config.Config) error    { return nil }
+func (v loopVM) Image() string                                      { return "img" }
+func (v loopVM) SSHUser() string                                    { return "root" }
+func (v loopVM) EnvCreds(config.Config) map[string]string           { return nil }
+func (v loopVM) ValidateCreds(context.Context, config.Config) error { return nil }
+func (v loopVM) Regions(context.Context, config.Config) ([]provider.Option, error) {
+	return v.regions, nil
+}
+func (v loopVM) Sizes(_ context.Context, _ config.Config,
+	region string) ([]provider.SizeInfo, error) {
+	return v.sizes[region], nil
+}
+func (v loopVM) Defaults(config.Config) (string, string)    { return "", "" }
+func (v loopVM) SetDefaults(*config.Config, string, string) {}
+
+func TestPickRegionSizeEscAtSizeReturnsToRegion(t *testing.T) {
+	oldR, oldS := pickRegionForm, pickSizeForm
+	t.Cleanup(func() { pickRegionForm, pickSizeForm = oldR, oldS })
+
+	vm := loopVM{
+		regions: []provider.Option{{Slug: "fra1", Label: "fra1  Frankfurt 1"},
+			{Slug: "nyc1", Label: "nyc1  New York 1"}},
+		sizes: map[string][]provider.SizeInfo{
+			"fra1": {{Slug: "b1", Category: "Basic", VCPUs: 2, MemGB: 4, DiskGB: 80,
+				Hourly: 0.036, Currency: "$"}},
+			"nyc1": {{Slug: "b2", Category: "Basic", VCPUs: 4, MemGB: 8, DiskGB: 160,
+				Hourly: 0.071, Currency: "$"}},
+		},
+	}
+
+	regionPicks := []string{"fra1", "nyc1"}
+	pickRegionForm = func(_ []huh.Option[string], _ string) (string, error) {
+		p := regionPicks[0]
+		regionPicks = regionPicks[1:]
+		return p, nil
+	}
+	sizeCalls := 0
+	pickSizeForm = func(opts []huh.Option[string], _ string) (string, error) {
+		sizeCalls++
+		if sizeCalls == 1 {
+			return "", huh.ErrUserAborted // ESC at size -> back to region
+		}
+		return "b2", nil
+	}
+
+	var out bytes.Buffer
+	region, si, err := pickRegionSize(context.Background(), &out, vm, config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if region.Slug != "nyc1" || si.Slug != "b2" {
+		t.Fatalf("picked %s/%s, want nyc1/b2", region.Slug, si.Slug)
+	}
+	if len(regionPicks) != 0 || sizeCalls != 2 {
+		t.Fatalf("region picker not re-shown after ESC (size calls %d)", sizeCalls)
+	}
+}
+
+func TestPickRegionSizeEmptySizesRepicksRegion(t *testing.T) {
+	oldR, oldS := pickRegionForm, pickSizeForm
+	t.Cleanup(func() { pickRegionForm, pickSizeForm = oldR, oldS })
+
+	vm := loopVM{
+		regions: []provider.Option{{Slug: "empty1", Label: "empty1"},
+			{Slug: "fra1", Label: "fra1  Frankfurt 1"}},
+		sizes: map[string][]provider.SizeInfo{
+			"fra1": {{Slug: "b1", Category: "Basic", VCPUs: 2, MemGB: 4, DiskGB: 80,
+				Hourly: 0.036, Currency: "$"}},
+		},
+	}
+
+	regionPicks := []string{"empty1", "fra1"}
+	pickRegionForm = func(_ []huh.Option[string], _ string) (string, error) {
+		p := regionPicks[0]
+		regionPicks = regionPicks[1:]
+		return p, nil
+	}
+	pickSizeForm = func(_ []huh.Option[string], _ string) (string, error) {
+		return "b1", nil
+	}
+
+	var out bytes.Buffer
+	region, si, err := pickRegionSize(context.Background(), &out, vm, config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if region.Slug != "fra1" || si.Slug != "b1" {
+		t.Fatalf("picked %s/%s, want fra1/b1", region.Slug, si.Slug)
+	}
+	if !strings.Contains(out.String(), "no matching sizes") {
+		t.Fatalf("empty-region warning missing from output: %q", out.String())
+	}
+}
+
+func TestPickRegionSizeEscAtRegionAborts(t *testing.T) {
+	oldR := pickRegionForm
+	t.Cleanup(func() { pickRegionForm = oldR })
+	pickRegionForm = func(_ []huh.Option[string], _ string) (string, error) {
+		return "", huh.ErrUserAborted
+	}
+
+	vm := loopVM{regions: []provider.Option{{Slug: "fra1", Label: "fra1"}}}
+	var out bytes.Buffer
+	_, _, err := pickRegionSize(context.Background(), &out, vm, config.Config{})
+	if !errors.Is(err, huh.ErrUserAborted) {
+		t.Fatalf("err = %v, want huh.ErrUserAborted", err)
+	}
+}
+
+func TestPickRegionSizeSortsCheapestFirst(t *testing.T) {
+	oldR, oldS := pickRegionForm, pickSizeForm
+	t.Cleanup(func() { pickRegionForm, pickSizeForm = oldR, oldS })
+
+	vm := loopVM{
+		regions: []provider.Option{{Slug: "fra1", Label: "fra1"}},
+		sizes: map[string][]provider.SizeInfo{
+			"fra1": {
+				{Slug: "pricey", Category: "Basic", Hourly: 0.10, Currency: "$"},
+				{Slug: "cheap", Category: "Basic", Hourly: 0.02, Currency: "$"},
+				{Slug: "tie-b", Category: "Basic", Hourly: 0.02, Currency: "$"},
+			},
+		},
+	}
+	pickRegionForm = func(_ []huh.Option[string], _ string) (string, error) {
+		return "fra1", nil
+	}
+	var sawFirst string
+	pickSizeForm = func(opts []huh.Option[string], _ string) (string, error) {
+		sawFirst = opts[0].Value
+		return opts[0].Value, nil
+	}
+
+	var out bytes.Buffer
+	if _, _, err := pickRegionSize(context.Background(), &out, vm,
+		config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if sawFirst != "cheap" {
+		t.Fatalf("first option = %q, want cheap (price sort, slug tie-break)", sawFirst)
+	}
+}
+
+func TestLaunchConfirmNoCancelsCleanly(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, true)
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
+
+	oldPick, oldRS, oldC := pickVMProvider, pickRegionSize, confirmLaunch
+	t.Cleanup(func() {
+		pickVMProvider, pickRegionSize, confirmLaunch = oldPick, oldRS, oldC
+	})
+	pickVMProvider = func(configured []provider.Provider,
+		_ string) (provider.Provider, error) {
+		return configured[0], nil
+	}
+	pickRegionSize = func(_ context.Context, _ io.Writer, _ provider.VM,
+		_ config.Config) (provider.Option, provider.SizeInfo, error) {
+		return provider.Option{Slug: "fra1", Label: "fra1  Frankfurt 1"},
+			provider.SizeInfo{Slug: "s-2vcpu-4gb", Category: "Basic", VCPUs: 2,
+				MemGB: 4, DiskGB: 80, Hourly: 0.036, Currency: "$"}, nil
+	}
+	confirmLaunch = func() (bool, error) { return false, nil }
+
+	out, code := runCmd(t, "launch")
+	if code != 0 {
+		t.Fatalf("declining the confirm must exit clean, got %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Launch summary") ||
+		!strings.Contains(out, "Basic — 2 vCPU, 4 GB memory, 80 GB disk") ||
+		!strings.Contains(out, `~$0.04/h, billed until "interview destroy"`) {
+		t.Fatalf("summary box missing or wrong:\n%s", out)
+	}
+	if !strings.Contains(out, "launch cancelled — nothing provisioned") {
+		t.Fatalf("cancel notice missing:\n%s", out)
+	}
+}
+
+func TestLaunchYesSkipsConfirmButPrintsSummary(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, true)
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
+
+	oldPick, oldRS, oldC := pickVMProvider, pickRegionSize, confirmLaunch
+	t.Cleanup(func() {
+		pickVMProvider, pickRegionSize, confirmLaunch = oldPick, oldRS, oldC
+	})
+	pickVMProvider = func(configured []provider.Provider,
+		_ string) (provider.Provider, error) {
+		return configured[0], nil
+	}
+	pickRegionSize = func(_ context.Context, _ io.Writer, _ provider.VM,
+		_ config.Config) (provider.Option, provider.SizeInfo, error) {
+		return provider.Option{Slug: "fra1", Label: "fra1  Frankfurt 1"},
+			provider.SizeInfo{Slug: "s-2vcpu-4gb", Category: "Basic", VCPUs: 2,
+				MemGB: 4, DiskGB: 80, Hourly: 0.036, Currency: "$"}, nil
+	}
+	confirmLaunch = func() (bool, error) {
+		t.Fatal("--yes must not prompt")
+		return false, nil
+	}
+
+	// The run proceeds past the gate and may fail later in terraform; only
+	// the gate behavior is asserted.
+	out, _ := runCmd(t, "launch", "--yes")
+	if !strings.Contains(out, "Launch summary") {
+		t.Fatalf("summary box must still print with --yes:\n%s", out)
+	}
+}
+
+func TestLaunchNonTTYSkipsSummaryAndConfirm(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, false)
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
+
+	oldC := confirmLaunch
+	t.Cleanup(func() { confirmLaunch = oldC })
+	confirmLaunch = func() (bool, error) {
+		t.Fatal("non-TTY must not prompt")
+		return false, nil
+	}
+
+	out, _ := runCmd(t, "launch", "--region", "fra1", "--size", "s-2vcpu-4gb")
+	if strings.Contains(out, "Launch summary") {
+		t.Fatalf("non-TTY printed the summary box:\n%s", out)
+	}
+}
+
+func TestLaunchSummaryFlagsPathFallsBackToSlugs(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, true)
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
+
+	oldPick, oldC := pickVMProvider, confirmLaunch
+	t.Cleanup(func() { pickVMProvider, confirmLaunch = oldPick, oldC })
+	pickVMProvider = func(configured []provider.Provider,
+		_ string) (provider.Provider, error) {
+		return configured[0], nil
+	}
+	confirmLaunch = func() (bool, error) { return false, nil }
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-2vcpu-4gb")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	// Flags path has no SizeInfo: region and size rows show the raw slugs,
+	// and no price row is rendered.
+	if !strings.Contains(out, "Launch summary") || !strings.Contains(out, "fra1") ||
+		!strings.Contains(out, "s-2vcpu-4gb") {
+		t.Fatalf("flags-path summary wrong:\n%s", out)
+	}
+	if strings.Contains(out, "/h,") {
+		t.Fatalf("flags-path summary must omit the price row:\n%s", out)
 	}
 }

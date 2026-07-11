@@ -2,7 +2,6 @@ package digitalocean
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/openbuzz/interview-labs/internal/config"
@@ -15,12 +14,6 @@ func token(cfg config.Config) string {
 		return t
 	}
 	return cfg.Providers.DigitalOcean.Token
-}
-
-// sizeLabel formats one droplet size row.
-func sizeLabel(s Size) string {
-	return fmt.Sprintf("%s  %dvcpu %dMB %dGB  $%.3f/hr ($%.0f/mo)",
-		s.Slug, s.VCPUs, s.Memory, s.Disk, s.PriceHourly, s.PriceMonthly)
 }
 
 func (do) Image() string   { return Image }
@@ -56,7 +49,7 @@ func (do) Regions(ctx context.Context, cfg config.Config) ([]provider.Option, er
 }
 
 func (do) Sizes(ctx context.Context, cfg config.Config,
-	region string) ([]provider.Option, error) {
+	region string) ([]provider.SizeInfo, error) {
 	c, err := NewClient(token(cfg))
 	if err != nil {
 		return nil, err
@@ -66,11 +59,24 @@ func (do) Sizes(ctx context.Context, cfg config.Config,
 		return nil, err
 	}
 
-	out := make([]provider.Option, 0, len(sizes))
+	out := make([]provider.SizeInfo, 0, len(sizes))
 	for _, s := range sizes {
-		out = append(out, provider.Option{Slug: s.Slug, Label: sizeLabel(s)})
+		out = append(out, toSizeInfo(s))
 	}
 	return out, nil
+}
+
+// toSizeInfo maps one droplet size onto the provider-neutral shape.
+func toSizeInfo(s Size) provider.SizeInfo {
+	return provider.SizeInfo{
+		Slug:     s.Slug,
+		Category: s.Description,
+		VCPUs:    s.VCPUs,
+		MemGB:    (s.Memory + 1023) / 1024,
+		DiskGB:   s.Disk,
+		Hourly:   s.PriceHourly,
+		Currency: "$",
+	}
 }
 
 func (do) Defaults(cfg config.Config) (string, string) {

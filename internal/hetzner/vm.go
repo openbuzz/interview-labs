@@ -32,7 +32,7 @@ func (hz) Regions(ctx context.Context, cfg config.Config) ([]provider.Option, er
 }
 
 func (hz) Sizes(ctx context.Context, cfg config.Config,
-	region string) ([]provider.Option, error) {
+	region string) ([]provider.SizeInfo, error) {
 	return ServerTypesFor(ctx, NewClient(token(cfg)), region)
 }
 

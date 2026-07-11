@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
@@ -17,12 +16,9 @@ import (
 // confirmDestroy is a seam; production asks via huh.
 var confirmDestroy = func(s *session.Session) (bool, error) {
 	ok := false
-	err := huh.NewForm(huh.NewGroup(
-		huh.NewConfirm().
-			Title(fmt.Sprintf("Destroy %s (%s, %s)?",
-				s.Meta.Slug, s.Meta.IP, s.Meta.Region)).
-			Value(&ok),
-	)).WithTheme(ui.Theme()).WithKeyMap(ui.FormKeyMap()).Run()
+	err := ui.ConfirmForm(
+		fmt.Sprintf("Destroy %s (%s, %s)?", s.Meta.Slug, s.Meta.IP, s.Meta.Region),
+		"Removes the VM and firewall; logs are archived locally.", &ok)
 	return ok, err
 }
 
@@ -48,11 +44,13 @@ session dir. Pass --yes to skip the confirmation.`,
 // runDestroyCmd resolves the session, confirms, and drives the destroy.
 func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 	out := cmd.OutOrStdout()
+	printNarrowWarning(out)
 	ref := ""
 	if len(args) == 1 {
 		ref = args[0]
 	}
-	s, err := resolveSession(ref)
+	s, err := resolveSession(ref, "Select a session to destroy",
+		"Tears down the cloud resources and archives logs. Stops billing.")
 	if err != nil {
 		return err
 	}
