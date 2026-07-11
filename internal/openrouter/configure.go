@@ -23,8 +23,7 @@ It can create and revoke scoped API keys for each lab session.
 If you don't have an account yet, create one at:
   https://openrouter.ai/sign-up
 
-1. Open https://openrouter.ai/settings/provisioning-keys
-   (OpenRouter's console calls these "provisioning keys")
+1. Open https://openrouter.ai/settings/management-keys
 2. Click "Create"
 3. Name it (e.g. "interview-labs"), click "Create"
 4. Copy the key (it is shown only once)
