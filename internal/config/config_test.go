@@ -115,3 +115,27 @@ func TestRoundTripAllProviders(t *testing.T) {
 		t.Fatalf("roles.vm = %q", out.Roles.VM)
 	}
 }
+
+func TestOpenRouterCloudflareRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	in := Config{}
+	in.Providers.OpenRouter = OpenRouter{ManagementKey: "mk-1", CapUSD: 12.5}
+	in.Providers.Cloudflare = Cloudflare{
+		APIToken: "cf-tok", ZoneID: "z1", Domain: "example.test",
+	}
+	if err := in.Write(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Providers.OpenRouter != in.Providers.OpenRouter {
+		t.Fatalf("openrouter = %+v", got.Providers.OpenRouter)
+	}
+	if got.Providers.Cloudflare != in.Providers.Cloudflare {
+		t.Fatalf("cloudflare = %+v", got.Providers.Cloudflare)
+	}
+}

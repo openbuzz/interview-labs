@@ -125,3 +125,37 @@ func TestOutputsParse(t *testing.T) {
 		t.Fatalf("Outputs() = %+v", got)
 	}
 }
+
+func TestOutputsParsesFQDN(t *testing.T) {
+	r, _ := fakeRunner(t)
+	outputs := `{"ip":{"value":"203.0.113.9"},"fqdn":{"value":"calm-otter.example.test"}}`
+	if err := os.WriteFile(filepath.Join(filepath.Dir(r.Bin.Path), "outputs.json"),
+		[]byte(outputs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Outputs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IP != "203.0.113.9" || got.FQDN != "calm-otter.example.test" {
+		t.Fatalf("Outputs() = %+v", got)
+	}
+}
+
+func TestOutputsMissingFQDNIsEmpty(t *testing.T) {
+	r, _ := fakeRunner(t)
+	outputs := `{"ip":{"value":"203.0.113.9"}}`
+	if err := os.WriteFile(filepath.Join(filepath.Dir(r.Bin.Path), "outputs.json"),
+		[]byte(outputs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Outputs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FQDN != "" {
+		t.Fatalf("fqdn = %q, want empty", got.FQDN)
+	}
+}

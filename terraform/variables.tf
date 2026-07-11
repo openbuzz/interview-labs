@@ -32,3 +32,21 @@ variable "ssh_dir" {
   description = "Absolute path that receives the generated keypair (key, key.pub)."
   type        = string
 }
+
+variable "dns_enabled" {
+  description = "Whether the session gets a Cloudflare DNS record."
+  type        = bool
+  default     = false
+}
+
+variable "cloudflare_zone_id" {
+  description = "Cloudflare zone that receives the session record."
+  type        = string
+  default     = ""
+}
+
+variable "dns_base_domain" {
+  description = "Zone apex domain, used to spell out the fqdn output."
+  type        = string
+  default     = ""
+}

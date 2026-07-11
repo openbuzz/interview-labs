@@ -17,9 +17,9 @@ import (
 )
 
 // validateCreds is a seam for tests; production hits the provider API.
-var validateCreds = func(ctx context.Context, vm provider.VM,
+var validateCreds = func(ctx context.Context, v provider.CredentialValidator,
 	cfg config.Config) error {
-	return vm.ValidateCreds(ctx, cfg)
+	return v.ValidateCreds(ctx, cfg)
 }
 
 // lookupSSH is a seam for tests; production checks PATH.
@@ -96,7 +96,8 @@ func checkStateDirs(p func(string)) bool {
 	return true
 }
 
-// checkCredentials reports one row per registered VM provider.
+// checkCredentials reports one row per credential-bearing provider —
+// VM, AI and access alike; only the base-interface menu label differs.
 func checkCredentials(ctx context.Context, p func(string)) bool {
 	cfg, err := config.Load()
 	if err != nil {
@@ -105,18 +106,18 @@ func checkCredentials(ctx context.Context, p func(string)) bool {
 	}
 
 	ok, anyConfigured := true, false
-	for _, pr := range provider.ByRole(providers, provider.RoleVM) {
-		vm, isVM := pr.(provider.VM)
-		if !isVM {
+	for _, pr := range providers {
+		v, isValidator := pr.(provider.CredentialValidator)
+		if !isValidator {
 			continue
 		}
-		if !vm.Configured(cfg) {
+		if !v.Configured(cfg) {
 			p(ui.RowWarn(pr.Label(), "not configured"))
 			continue
 		}
 
 		anyConfigured = true
-		if err := validateCreds(ctx, vm, cfg); err != nil {
+		if err := validateCreds(ctx, v, cfg); err != nil {
 			ok = false
 			p(ui.RowFail(pr.Label(), err.Error()))
 			p("  " + ui.Faint.Render("run interview init to replace the credentials"))

@@ -7,15 +7,19 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/openbuzz/interview-labs/internal/config"
+	"github.com/openbuzz/interview-labs/internal/openrouter"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	sshtest "github.com/openbuzz/interview-labs/internal/ssh"
@@ -103,6 +107,8 @@ func TestLaunchPipelineAgainstLocalSSH(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
 	addr, privPEM, pub := sshtest.StartTestServer(t)
 	host, portStr, err := net.SplitHostPort(addr)
@@ -145,6 +151,8 @@ func TestLaunchNonTTYWithoutFlagsExits2(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 	old := isTTY
 	isTTY = func() bool { return false }
@@ -164,6 +172,8 @@ func TestLaunchNoTokenFails(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
 	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
 	if code != 1 {
@@ -182,6 +192,8 @@ func TestLaunchFailsWithoutConfiguredProvider(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
 	out, code := runCmd(t, "launch")
 
@@ -200,6 +212,8 @@ func TestLaunchPersistsProviderPick(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	oldPick := pickVMProvider
 	t.Cleanup(func() { pickVMProvider = oldPick })
@@ -236,6 +250,8 @@ func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	oldPick, oldRS := pickVMProvider, pickRegionSize
 	t.Cleanup(func() { pickVMProvider, pickRegionSize = oldPick, oldRS })
@@ -277,6 +293,8 @@ func TestLaunchHetznerPipeline(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	t.Setenv("HCLOUD_TOKEN", "hz-tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
 	addr, privPEM, pub := sshtest.StartTestServer(t)
 	host, portStr, err := net.SplitHostPort(addr)
@@ -316,6 +334,8 @@ func TestLaunchAWSPipeline(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "aws-id")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "aws-sec")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
 	addr, privPEM, pub := sshtest.StartTestServer(t)
 	host, portStr, err := net.SplitHostPort(addr)
@@ -361,6 +381,8 @@ func TestLaunchQuietRendersPhaseRows(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	oldUI := ui.Interactive
 	ui.Interactive = func() bool { return false } // plain step lines, no ANSI redraw
@@ -404,6 +426,8 @@ func TestLaunchVerboseStreamsTerraform(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	// swapTTY(true) also routes selectVMProvider through the real huh picker;
 	// stub it like the sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
@@ -598,6 +622,8 @@ func TestLaunchConfirmNoCancelsCleanly(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
@@ -636,6 +662,8 @@ func TestLaunchYesSkipsConfirmButPrintsSummary(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
@@ -671,6 +699,8 @@ func TestLaunchNonTTYSkipsSummaryAndConfirm(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, false)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
@@ -692,6 +722,8 @@ func TestLaunchSummaryFlagsPathFallsBackToSlugs(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
@@ -715,5 +747,204 @@ func TestLaunchSummaryFlagsPathFallsBackToSlugs(t *testing.T) {
 	}
 	if strings.Contains(out, "/h,") {
 		t.Fatalf("flags-path summary must omit the price row:\n%s", out)
+	}
+}
+
+// mintServer fakes OpenRouter's POST /keys; counts requests.
+func mintServer(t *testing.T, hash string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/keys" {
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			calls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"key":"sk-or-child","data":{"hash":"` + hash + `"}}`))
+		}))
+	t.Cleanup(srv.Close)
+	old := openrouter.BaseURL
+	openrouter.BaseURL = srv.URL
+	t.Cleanup(func() { openrouter.BaseURL = old })
+	return srv, &calls
+}
+
+// writeCFConfig stores cloudflare zone config (zone_id is config-only).
+func writeCFConfig(t *testing.T) {
+	t.Helper()
+	cfg := config.Config{}
+	cfg.Providers.Cloudflare.ZoneID = "z1"
+	cfg.Providers.Cloudflare.Domain = "example.test"
+	if err := cfg.Write(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLaunchWithAIAndDNS(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "cf-tok")
+	writeCFConfig(t)
+	_, mintCalls := mintServer(t, "hash-1")
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	dir := fakeTFForLaunch(t, host, privPEM, pub)
+	// The fake's outputs gain the fqdn the real root module now emits.
+	outputs := `{"ip":{"value":"` + host + `"},` +
+		`"fqdn":{"value":"session.example.test"}}`
+	if err := os.WriteFile(filepath.Join(dir, "outputs.json"),
+		[]byte(outputs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	if mintCalls.Load() != 1 {
+		t.Fatalf("mint calls = %d, want 1", mintCalls.Load())
+	}
+	all, err := session.List()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("sessions: %d, %v", len(all), err)
+	}
+	s := all[0]
+	assertAIAndDNSMeta(t, s, "hash-1", 10, "session.example.test")
+
+	assertEnvDump(t, dir, "CLOUDFLARE_API_TOKEN=cf-tok", "")
+	assertTfvarsContains(t, s, `"dns_enabled": true`, `"cloudflare_zone_id": "z1"`,
+		`"dns_base_domain": "example.test"`)
+}
+
+// assertAIAndDNSMeta checks the roles a launch recorded for the AI and
+// access providers, plus the minted key's persisted hash/cap and DNS name.
+func assertAIAndDNSMeta(t *testing.T, s *session.Session, wantHash string,
+	wantCapUSD float64, wantFQDN string) {
+	t.Helper()
+	if s.Meta.Roles["ai"] != "openrouter" || s.Meta.Roles["access"] != "cloudflare" {
+		t.Fatalf("roles = %v", s.Meta.Roles)
+	}
+	if s.Meta.AIKeyHash != wantHash || s.Meta.AICapUSD != wantCapUSD ||
+		s.Meta.FQDN != wantFQDN {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+}
+
+// assertTfvarsContains checks the session's staged tfvars file contains
+// every wanted substring.
+func assertTfvarsContains(t *testing.T, s *session.Session, wants ...string) {
+	t.Helper()
+	tfvars, err := os.ReadFile(filepath.Join(s.TerraformDir(), "terraform.tfvars.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range wants {
+		if !strings.Contains(string(tfvars), want) {
+			t.Fatalf("tfvars missing %s:\n%s", want, tfvars)
+		}
+	}
+}
+
+func TestLaunchOptOutFlagsSkipAIAndDNS(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "cf-tok")
+	writeCFConfig(t)
+	_, mintCalls := mintServer(t, "hash-1")
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb",
+		"--no-ai", "--no-dns")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	if mintCalls.Load() != 0 {
+		t.Fatalf("mint called %d times despite --no-ai", mintCalls.Load())
+	}
+	all, _ := session.List()
+	s := all[0]
+	if _, ok := s.Meta.Roles["ai"]; ok {
+		t.Fatalf("roles = %v", s.Meta.Roles)
+	}
+	if _, ok := s.Meta.Roles["access"]; ok {
+		t.Fatalf("roles = %v", s.Meta.Roles)
+	}
+	tfvars, _ := os.ReadFile(filepath.Join(s.TerraformDir(), "terraform.tfvars.json"))
+	if strings.Contains(string(tfvars), "dns_enabled") {
+		t.Fatalf("tfvars must omit dns vars with --no-dns:\n%s", tfvars)
+	}
+}
+
+func TestLaunchMintFailureFailsSession(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":{"message":"quota exceeded"}}`))
+		}))
+	t.Cleanup(srv.Close)
+	oldBase := openrouter.BaseURL
+	openrouter.BaseURL = srv.URL
+	t.Cleanup(func() { openrouter.BaseURL = oldBase })
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+
+	all, _ := session.List()
+	if len(all) != 1 {
+		t.Fatalf("sessions = %d", len(all))
+	}
+	s := all[0]
+	if s.Meta.Status != session.StatusFailed || s.Meta.AIKeyHash != "" {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+	if !strings.Contains(out, "interview destroy") {
+		t.Fatalf("missing destroy hint:\n%s", out)
 	}
 }

@@ -30,6 +30,24 @@ module "hetzner" {
   ssh_public_key = tls_private_key.ssh.public_key_openssh
 }
 
+# The active VM module's address, shared by the ip output and the DNS record.
+locals {
+  vm_ip = coalesce(
+    one(module.digitalocean[*].ip),
+    one(module.hetzner[*].ip),
+    one(module.aws[*].ip),
+  )
+}
+
+module "cloudflare" {
+  source = "./cloudflare"
+  count  = var.dns_enabled ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  slug    = var.slug
+  ip      = local.vm_ip
+}
+
 # Session keypair lives in the root module; provider modules consume the public key.
 resource "tls_private_key" "ssh" {
   algorithm = "ED25519"

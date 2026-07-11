@@ -84,3 +84,41 @@ func TestPrintHandoverFailedOmitsSSH(t *testing.T) {
 		t.Fatalf("failed session missing destroy hint:\n%s", out)
 	}
 }
+
+func TestSessionBoxDNSAndAIRows(t *testing.T) {
+	s := newBoxSession(t, session.StatusReady, "203.0.113.9")
+	s.Meta.Roles["ai"] = "openrouter"
+	s.Meta.AIKeyHash, s.Meta.AICapUSD = "hash-1", 12.5
+	if err := s.SetFQDN("calm-otter.example.test"); err != nil {
+		t.Fatal(err)
+	}
+
+	box := sessionBox(s)
+
+	for _, want := range []string{
+		"dns", "calm-otter.example.test", "ai", "openrouter (cap $12.5)",
+	} {
+		if !strings.Contains(box, want) {
+			t.Fatalf("box missing %q:\n%s", want, box)
+		}
+	}
+}
+
+func TestSessionBoxOmitsRowsWithoutAIAndDNS(t *testing.T) {
+	s := newBoxSession(t, session.StatusReady, "203.0.113.9")
+
+	box := sessionBox(s)
+
+	if strings.Contains(box, "dns") || strings.Contains(box, "cap $") {
+		t.Fatalf("plain session shows dns/ai rows:\n%s", box)
+	}
+}
+
+func TestSessionBoxNoAIRowWhenMintNeverRan(t *testing.T) {
+	s := newBoxSession(t, session.StatusFailed, "")
+	s.Meta.Roles["ai"] = "openrouter" // role recorded, mint never reached
+
+	if box := sessionBox(s); strings.Contains(box, "cap $") {
+		t.Fatalf("unminted session shows ai row:\n%s", box)
+	}
+}

@@ -32,11 +32,28 @@ type AWS struct {
 	Instance        string `yaml:"instance"`
 }
 
+// OpenRouter is the OpenRouter provider configuration. The management key
+// mints per-session API keys; cap_usd is the per-session spend cap in USD
+// (0 means the built-in default applies at use).
+type OpenRouter struct {
+	ManagementKey string  `yaml:"management_key"`
+	CapUSD        float64 `yaml:"cap_usd"`
+}
+
+// Cloudflare is the Cloudflare provider configuration.
+type Cloudflare struct {
+	APIToken string `yaml:"api_token"`
+	ZoneID   string `yaml:"zone_id"`
+	Domain   string `yaml:"domain"`
+}
+
 // Providers holds per-provider configuration.
 type Providers struct {
 	DigitalOcean DigitalOcean `yaml:"digitalocean"`
 	Hetzner      Hetzner      `yaml:"hetzner"`
 	AWS          AWS          `yaml:"aws"`
+	OpenRouter   OpenRouter   `yaml:"openrouter"`
+	Cloudflare   Cloudflare   `yaml:"cloudflare"`
 }
 
 // Roles maps a role to the provider that fulfills it.

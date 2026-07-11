@@ -8,5 +8,5 @@ import "embed"
 // in-repo init never rides along (the lock file is the one dot-path wanted).
 //
 //go:embed terraform/*.tf terraform/.terraform.lock.hcl
-//go:embed terraform/digitalocean terraform/hetzner terraform/aws
+//go:embed terraform/digitalocean terraform/hetzner terraform/aws terraform/cloudflare
 var InfraFS embed.FS

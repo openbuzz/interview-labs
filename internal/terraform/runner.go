@@ -25,7 +25,8 @@ type Runner struct {
 
 // Outputs are the root module's output values.
 type Outputs struct {
-	IP string
+	IP   string
+	FQDN string
 }
 
 // PluginCacheDir returns (and creates) the shared provider cache.
@@ -139,5 +140,5 @@ func (r *Runner) Outputs(ctx context.Context) (Outputs, error) {
 	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&parsed); err != nil {
 		return Outputs{}, err
 	}
-	return Outputs{IP: parsed["ip"].Value}, nil
+	return Outputs{IP: parsed["ip"].Value, FQDN: parsed["fqdn"].Value}, nil
 }

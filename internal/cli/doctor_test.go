@@ -72,15 +72,23 @@ func TestDoctorAllGood(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	old := validateCreds
-	validateCreds = func(context.Context, provider.VM, config.Config) error { return nil }
+	validateCreds = func(context.Context, provider.CredentialValidator,
+		config.Config) error {
+		return nil
+	}
 	t.Cleanup(func() { validateCreds = old })
 
 	out, code := runCmd(t, "doctor")
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
-	for _, want := range []string{"terraform", "1.9.5", "DigitalOcean", "credentials valid"} {
+	for _, want := range []string{
+		"terraform", "1.9.5", "DigitalOcean", "credentials valid",
+		"OpenRouter", "Cloudflare", "not configured",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
@@ -96,6 +104,8 @@ func TestDoctorNoTFBinaryFails(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 
 	out, code := runCmd(t, "doctor")
 	if code != 1 {
@@ -123,8 +133,13 @@ func TestDoctorMissingSSHIsNote(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	oldValidate := validateCreds
-	validateCreds = func(context.Context, provider.VM, config.Config) error { return nil }
+	validateCreds = func(context.Context, provider.CredentialValidator,
+		config.Config) error {
+		return nil
+	}
 	t.Cleanup(func() { validateCreds = oldValidate })
 
 	out, code := runCmd(t, "doctor")
@@ -145,8 +160,11 @@ func TestDoctorRejectedTokenFails(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	old := validateCreds
-	validateCreds = func(context.Context, provider.VM, config.Config) error {
+	validateCreds = func(context.Context, provider.CredentialValidator,
+		config.Config) error {
 		return errors.New("token rejected by DigitalOcean")
 	}
 	t.Cleanup(func() { validateCreds = old })
@@ -175,8 +193,13 @@ func TestDoctorXDGUnwritableDirFails(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	old := validateCreds
-	validateCreds = func(context.Context, provider.VM, config.Config) error { return nil }
+	validateCreds = func(context.Context, provider.CredentialValidator,
+		config.Config) error {
+		return nil
+	}
 	t.Cleanup(func() { validateCreds = old })
 
 	out, code := runCmd(t, "doctor")
@@ -185,5 +208,51 @@ func TestDoctorXDGUnwritableDirFails(t *testing.T) {
 	}
 	if !strings.Contains(out, "state dirs") {
 		t.Fatalf("missing state dirs row:\n%s", out)
+	}
+}
+
+func TestDoctorChecksAIAndAccessProviders(t *testing.T) {
+	fakeTF(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "mk")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "cf-tok")
+
+	cfg := config.Config{}
+	cfg.Providers.Cloudflare.ZoneID = "z1"
+	cfg.Providers.Cloudflare.Domain = "example.test"
+	if err := cfg.Write(); err != nil {
+		t.Fatal(err)
+	}
+
+	var checked []string
+	old := validateCreds
+	validateCreds = func(_ context.Context, v provider.CredentialValidator,
+		_ config.Config) error {
+		if p, ok := v.(provider.Provider); ok {
+			checked = append(checked, p.Name())
+		}
+		return nil
+	}
+	t.Cleanup(func() { validateCreds = old })
+
+	out, code := runCmd(t, "doctor")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	want := []string{"openrouter", "cloudflare"}
+	for _, w := range want {
+		found := false
+		for _, c := range checked {
+			found = found || c == w
+		}
+		if !found {
+			t.Fatalf("doctor never validated %s (checked %v)", w, checked)
+		}
 	}
 }

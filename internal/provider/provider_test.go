@@ -70,3 +70,53 @@ func TestVMSatisfiesProvider(t *testing.T) {
 		t.Fatal("VM capability lost through ByRole")
 	}
 }
+
+// fakeAI / fakeAccess prove the new capability contracts are implementable
+// and survive ByRole, mirroring fakeVM.
+type fakeAI struct{}
+
+func (fakeAI) Name() string                                       { return "fake-ai" }
+func (fakeAI) Label() string                                      { return "FakeAI" }
+func (fakeAI) Roles() []Role                                      { return []Role{RoleAI} }
+func (fakeAI) Configured(config.Config) bool                      { return true }
+func (fakeAI) Configure(context.Context, *config.Config) error    { return nil }
+func (fakeAI) ValidateCreds(context.Context, config.Config) error { return nil }
+func (fakeAI) Mint(context.Context, config.Config, string) (MintedKey, error) {
+	return MintedKey{Hash: "h1", CapUSD: 10}, nil
+}
+func (fakeAI) Revoke(context.Context, config.Config, string) error { return nil }
+
+type fakeAccess struct{}
+
+func (fakeAccess) Name() string                                       { return "fake-access" }
+func (fakeAccess) Label() string                                      { return "FakeAccess" }
+func (fakeAccess) Roles() []Role                                      { return []Role{RoleAccess} }
+func (fakeAccess) Configured(config.Config) bool                      { return true }
+func (fakeAccess) Configure(context.Context, *config.Config) error    { return nil }
+func (fakeAccess) ValidateCreds(context.Context, config.Config) error { return nil }
+func (fakeAccess) EnvCreds(config.Config) map[string]string           { return nil }
+func (fakeAccess) TFVars(config.Config) map[string]any                { return nil }
+
+func TestCapabilityInterfacesSurviveByRole(t *testing.T) {
+	var ai AI = fakeAI{}
+	var acc Access = fakeAccess{}
+
+	got := ByRole([]Provider{ai, acc}, RoleAI)
+	if len(got) != 1 {
+		t.Fatalf("ByRole(ai) kept %d, want 1", len(got))
+	}
+	if _, ok := got[0].(AI); !ok {
+		t.Fatal("AI capability lost through ByRole")
+	}
+	if _, ok := ByRole([]Provider{ai, acc}, RoleAccess)[0].(Access); !ok {
+		t.Fatal("Access capability lost through ByRole")
+	}
+}
+
+// Every capability that validates credentials satisfies CredentialValidator —
+// doctor walks the registry against this narrow view.
+var (
+	_ CredentialValidator = fakeVM{}
+	_ CredentialValidator = fakeAI{}
+	_ CredentialValidator = fakeAccess{}
+)

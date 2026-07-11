@@ -221,3 +221,33 @@ func TestSSHUserPersistsAndBackfills(t *testing.T) {
 		t.Fatalf("legacy ssh user = %q, want root", legacy.Meta.SSHUser)
 	}
 }
+
+func TestAIAndFQDNFieldsRoundTrip(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s, err := New("fra1", "s-1vcpu-1gb", "img", "root",
+		map[string]string{"vm": "digitalocean", "ai": "openrouter"},
+		TerraformInfo{Binary: "terraform", Version: "1.9.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.Meta.AIKeyHash, s.Meta.AICapUSD = "hash-1", 10
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFQDN("calm-otter.example.test"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Get(s.Meta.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta.AIKeyHash != "hash-1" || got.Meta.AICapUSD != 10 ||
+		got.Meta.FQDN != "calm-otter.example.test" {
+		t.Fatalf("meta = %+v", got.Meta)
+	}
+	if got.Meta.Roles["ai"] != "openrouter" {
+		t.Fatalf("roles = %v", got.Meta.Roles)
+	}
+}

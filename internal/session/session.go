@@ -39,6 +39,9 @@ type Metadata struct {
 	SSHUser   string            `json:"ssh_user,omitempty"`
 	Terraform TerraformInfo     `json:"terraform"`
 	IP        string            `json:"ip,omitempty"`
+	FQDN      string            `json:"fqdn,omitempty"`
+	AIKeyHash string            `json:"ai_key_hash,omitempty"`
+	AICapUSD  float64           `json:"ai_cap_usd,omitempty"`
 	Status    string            `json:"status"`
 	Phase     string            `json:"phase"`
 }
@@ -183,6 +186,9 @@ func (s *Session) SetStatus(st string) error { s.Meta.Status = st; return s.Save
 
 // SetIP persists the droplet address.
 func (s *Session) SetIP(ip string) error { s.Meta.IP = ip; return s.Save() }
+
+// SetFQDN persists the session's DNS name.
+func (s *Session) SetFQDN(fqdn string) error { s.Meta.FQDN = fqdn; return s.Save() }
 
 // Path helpers.
 func (s *Session) MetadataPath() string   { return filepath.Join(s.Dir, "metadata.json") }

@@ -55,14 +55,9 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 		return err
 	}
 
-	if !yes {
-		if !isTTY() {
-			return usageError("destroy needs --yes when not on a terminal")
-		}
-		ok, err := confirmDestroy(s)
-		if err != nil || !ok {
-			return err
-		}
+	proceed, err := confirmDestroyGate(s, yes)
+	if err != nil || !proceed {
+		return err
 	}
 	release, err := s.Lock()
 	if err != nil {
@@ -70,21 +65,41 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 	}
 	defer release()
 
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
 	runnerOut := io.Writer(out)
 	if quietOutput() {
 		runnerOut = io.Discard
 	}
-	runner, err := destroyRunner(out, runnerOut, s)
+	runner, err := destroyRunner(out, runnerOut, cfg, s)
 	if err != nil {
 		return err
 	}
-	return runDestroy(cmd.Context(), out, runner, s)
+	return runDestroy(cmd.Context(), out, cfg, runner, s)
+}
+
+// confirmDestroyGate blocks on the destroy confirmation unless yes is set;
+// proceed is false on a clean decline (err is nil) or a hard failure.
+func confirmDestroyGate(s *session.Session, yes bool) (proceed bool, err error) {
+	if yes {
+		return true, nil
+	}
+	if !isTTY() {
+		return false, usageError("destroy needs --yes when not on a terminal")
+	}
+	ok, err := confirmDestroy(s)
+	if err != nil || !ok {
+		return false, err
+	}
+	return true, nil
 }
 
 // destroyRunner rebuilds the runner for a session, preferring the binary that
 // applied it and warning when falling back. The fallback warning always goes
 // to out; runnerOut feeds the Runner's own Out field (routed when quiet).
-func destroyRunner(out, runnerOut io.Writer,
+func destroyRunner(out, runnerOut io.Writer, cfg config.Config,
 	s *session.Session) (*terraform.Runner, error) {
 	bin, err := terraform.FindNamed(s.Meta.Terraform.Binary)
 	if err != nil {
@@ -98,15 +113,20 @@ func destroyRunner(out, runnerOut io.Writer,
 				bin.Name, bin.Version)))
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, err
-	}
 	vmName := s.Meta.Roles["vm"]
 	vm, ok := vmByName(vmName)
 	if !ok {
 		return nil, fmt.Errorf("session %s uses unknown provider %q",
 			s.Meta.Slug, vmName)
+	}
+	creds := vm.EnvCreds(cfg)
+	if name := s.Meta.Roles["access"]; name != "" {
+		acc, ok := accessByName(name)
+		if !ok {
+			return nil, fmt.Errorf("session %s uses unknown access provider %q",
+				s.Meta.Slug, name)
+		}
+		creds = mergeCreds(creds, acc.EnvCreds(cfg))
 	}
 	cache, err := terraform.PluginCacheDir()
 	if err != nil {
@@ -115,14 +135,16 @@ func destroyRunner(out, runnerOut io.Writer,
 
 	return &terraform.Runner{
 		Bin: bin, Dir: s.TerraformDir(),
-		Env:     terraform.RunEnv(vm.EnvCreds(cfg), cache),
+		Env:     terraform.RunEnv(creds, cache),
 		LogsDir: s.LogsDir(), Out: runnerOut,
 	}, nil
 }
 
-// runDestroy inits, destroys, and archives; failures keep the session with a
-// failed-destroy status and point at the logs.
-func runDestroy(ctx context.Context, out io.Writer,
+// runDestroy inits, destroys, revokes the session's AI key, and archives;
+// failures keep the session with a failed-destroy status and point at the
+// logs. A rerun is safe: terraform destroy is idempotent and a 404 on
+// revoke counts as success.
+func runDestroy(ctx context.Context, out io.Writer, cfg config.Config,
 	r *terraform.Runner, s *session.Session) error {
 	quiet := quietOutput()
 	s.SetStatus(session.StatusDestroying)
@@ -136,6 +158,9 @@ func runDestroy(ctx context.Context, out io.Writer,
 	}); err != nil {
 		return failDestroy(out, s, err)
 	}
+	if err := revokeAIKey(ctx, out, quiet, cfg, s); err != nil {
+		return failDestroy(out, s, err)
+	}
 
 	if err := s.Archive(); err != nil {
 		return err
@@ -143,6 +168,23 @@ func runDestroy(ctx context.Context, out io.Writer,
 	fmt.Fprintln(out, ui.RowOK(s.Meta.Slug, "destroyed"))
 	fmt.Fprintln(out, ui.Next("interview launch"))
 	return nil
+}
+
+// revokeAIKey revokes the session's minted key when one exists; sessions
+// without a hash (never minted, or pre-AI) are a no-op.
+func revokeAIKey(ctx context.Context, out io.Writer, quiet bool,
+	cfg config.Config, s *session.Session) error {
+	if s.Meta.AIKeyHash == "" {
+		return nil
+	}
+	name := s.Meta.Roles["ai"]
+	ai, ok := aiByName(name)
+	if !ok {
+		return fmt.Errorf("session %s uses unknown ai provider %q", s.Meta.Slug, name)
+	}
+	return step(out, quiet, "revoke ai key", func() error {
+		return ai.Revoke(ctx, cfg, s.Meta.AIKeyHash)
+	})
 }
 
 // failDestroy records the failure and prints the recovery hints.

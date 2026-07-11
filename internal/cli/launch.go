@@ -149,7 +149,7 @@ var confirmLaunch = func() (bool, error) {
 
 func newLaunchCmd() *cobra.Command {
 	var region, size string
-	var yes bool
+	var yes, noAI, noDNS bool
 	cmd := &cobra.Command{
 		Use:   "launch",
 		Short: "deploy a session VM",
@@ -161,9 +161,13 @@ prints a ready-to-paste ssh line. Selections are remembered and
 preselected next time. Pass --yes to skip the billing confirmation.
 Sessions are independent and run in parallel.
 
+When OpenRouter or Cloudflare are configured, launch also mints a
+spend-capped AI key and creates a proxied DNS record; --no-ai and
+--no-dns skip them per session.
+
 The VM bills hourly until "interview destroy".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLaunchCmd(cmd, &region, &size, yes)
+			return runLaunchCmd(cmd, &region, &size, yes, noAI, noDNS)
 		},
 	}
 	cmd.Flags().StringVar(&region, "region", "",
@@ -171,12 +175,14 @@ The VM bills hourly until "interview destroy".`,
 	cmd.Flags().StringVar(&size, "size", "",
 		"provider size slug (e.g. s-2vcpu-2gb, cx22, m7i.xlarge)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the billing confirmation prompt")
+	cmd.Flags().BoolVar(&noAI, "no-ai", false, "skip the per-session AI key mint")
+	cmd.Flags().BoolVar(&noDNS, "no-dns", false, "skip the per-session DNS record")
 	return cmd
 }
 
 // runLaunchCmd resolves a provider, region and size, gates on the billing
 // confirm, and drives the launch.
-func runLaunchCmd(cmd *cobra.Command, region, size *string, yes bool) error {
+func runLaunchCmd(cmd *cobra.Command, region, size *string, yes, noAI, noDNS bool) error {
 	out := cmd.OutOrStdout()
 	cfg, err := config.Load()
 	if err != nil {
@@ -205,8 +211,10 @@ func runLaunchCmd(cmd *cobra.Command, region, size *string, yes bool) error {
 		return nil
 	}
 
+	ai := activeAI(cfg, noAI)
+	access := activeAccess(cfg, noDNS)
 	s, err := session.New(*region, *size, vm.Image(), vm.SSHUser(),
-		map[string]string{"vm": vm.Name()},
+		sessionRoles(vm, ai, access),
 		session.TerraformInfo{Binary: bin.Name, Version: bin.Version})
 	if err != nil {
 		return err
@@ -217,7 +225,8 @@ func runLaunchCmd(cmd *cobra.Command, region, size *string, yes bool) error {
 	}
 	defer release()
 
-	if err := runLaunch(cmd.Context(), out, vm.EnvCreds(cfg), bin, s); err != nil {
+	if err := runLaunch(cmd.Context(), out, buildLaunchInputs(cfg, vm, ai, access),
+		bin, s); err != nil {
 		return failLaunch(out, s, err)
 	}
 	return nil
@@ -283,6 +292,76 @@ func selectVMProvider(out io.Writer, cfg *config.Config) (provider.VM, error) {
 	return vm, nil
 }
 
+// activeAI resolves the AI provider a launch uses: the sole configured one,
+// unless disabled by flag. nil means the session runs without an AI key.
+func activeAI(cfg config.Config, disabled bool) provider.AI {
+	if disabled {
+		return nil
+	}
+	for _, p := range provider.ByRole(providers, provider.RoleAI) {
+		if ai, ok := p.(provider.AI); ok && p.Configured(cfg) {
+			return ai
+		}
+	}
+	return nil
+}
+
+// activeAccess resolves the access provider the same way.
+func activeAccess(cfg config.Config, disabled bool) provider.Access {
+	if disabled {
+		return nil
+	}
+	for _, p := range provider.ByRole(providers, provider.RoleAccess) {
+		if acc, ok := p.(provider.Access); ok && p.Configured(cfg) {
+			return acc
+		}
+	}
+	return nil
+}
+
+// sessionRoles records which provider serves each role this session.
+func sessionRoles(vm provider.VM, ai provider.AI, access provider.Access) map[string]string {
+	roles := map[string]string{"vm": vm.Name()}
+	if ai != nil {
+		roles["ai"] = ai.Name()
+	}
+	if access != nil {
+		roles["access"] = access.Name()
+	}
+	return roles
+}
+
+// mergeCreds folds credential env maps left to right; key sets are disjoint
+// by construction (each provider owns its vendor's env names).
+func mergeCreds(maps ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range maps {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// launchInputs bundles what runLaunch needs beyond the session itself.
+type launchInputs struct {
+	cfg    config.Config
+	creds  map[string]string
+	tfvars map[string]any
+	ai     provider.AI
+}
+
+// buildLaunchInputs assembles creds and tfvars from the active providers.
+func buildLaunchInputs(cfg config.Config, vm provider.VM, ai provider.AI,
+	access provider.Access) launchInputs {
+	in := launchInputs{cfg: cfg, creds: vm.EnvCreds(cfg), ai: ai}
+	if access != nil {
+		in.creds = mergeCreds(in.creds, access.EnvCreds(cfg))
+		in.tfvars = access.TFVars(cfg)
+	}
+	return in
+}
+
 // ensureRegionSize fills missing region/size from the interactive loop and
 // persists the picks; regionLabel and si are zero on the flags path.
 func ensureRegionSize(ctx context.Context, out io.Writer, vm provider.VM,
@@ -339,37 +418,20 @@ func step(out io.Writer, quiet bool, title string, fn func() error) error {
 
 // runLaunch drives the launch phases; quiet mode renders each as a step row
 // and keeps terraform output in the session logs only.
-func runLaunch(ctx context.Context, out io.Writer,
-	creds map[string]string, bin terraform.Binary, s *session.Session) error {
+func runLaunch(ctx context.Context, out io.Writer, in launchInputs,
+	bin terraform.Binary, s *session.Session) error {
 	quiet := quietOutput()
 	runnerOut := out
 	if quiet {
 		runnerOut = io.Discard
 	}
-	runner, err := newSessionRunner(runnerOut, creds, bin, s)
+	runner, err := newSessionRunner(runnerOut, in.creds, bin, s)
 	if err != nil {
 		return err
 	}
 
-	if err := step(out, quiet, "stage", func() error {
-		return stageSession(s)
-	}); err != nil {
-		return err
-	}
-	if err := step(out, quiet, "terraform init", func() error {
-		return tfInit(ctx, runner, s)
-	}); err != nil {
-		return err
-	}
-	var ip string
-	if err := step(out, quiet, "terraform apply", func() error {
-		if err := tfApply(ctx, runner, s); err != nil {
-			return err
-		}
-		var ipErr error
-		ip, ipErr = fetchIP(ctx, runner, s)
-		return ipErr
-	}); err != nil {
+	ip, err := applyPhases(ctx, out, quiet, runner, in, s)
+	if err != nil {
 		return err
 	}
 
@@ -383,10 +445,46 @@ func runLaunch(ctx context.Context, out io.Writer,
 	}
 	defer client.Close()
 
+	if in.ai != nil {
+		if err := step(out, quiet, "mint ai key", func() error {
+			return mintAIKey(ctx, in.ai, in.cfg, s)
+		}); err != nil {
+			return err
+		}
+	}
+
 	if err := greet(ctx, out, client, s); err != nil {
 		return err
 	}
 	return printLaunchSummary(out, s)
+}
+
+// applyPhases runs stage/terraform-init/terraform-apply and returns the VM
+// address terraform emitted; split out of runLaunch to stay under the
+// complexity gate.
+func applyPhases(ctx context.Context, out io.Writer, quiet bool, runner *terraform.Runner,
+	in launchInputs, s *session.Session) (ip string, err error) {
+	if err := step(out, quiet, "stage", func() error {
+		return stageSession(s, in.tfvars)
+	}); err != nil {
+		return "", err
+	}
+	if err := step(out, quiet, "terraform init", func() error {
+		return tfInit(ctx, runner, s)
+	}); err != nil {
+		return "", err
+	}
+	if err := step(out, quiet, "terraform apply", func() error {
+		if err := tfApply(ctx, runner, s); err != nil {
+			return err
+		}
+		var ipErr error
+		ip, ipErr = fetchIP(ctx, runner, s)
+		return ipErr
+	}); err != nil {
+		return "", err
+	}
+	return ip, nil
 }
 
 // newSessionRunner builds the terraform runner over the session dirs.
@@ -402,8 +500,23 @@ func newSessionRunner(out io.Writer, creds map[string]string,
 	}, nil
 }
 
+// mintAIKey mints the session's spend-capped API key and persists the
+// revoke handle immediately — a later phase failure must still revoke.
+func mintAIKey(ctx context.Context, ai provider.AI, cfg config.Config,
+	s *session.Session) error {
+	if err := s.SetPhase("ai-mint"); err != nil {
+		return err
+	}
+	key, err := ai.Mint(ctx, cfg, s.Meta.Slug)
+	if err != nil {
+		return err
+	}
+	s.Meta.AIKeyHash, s.Meta.AICapUSD = key.Hash, key.CapUSD
+	return s.Save()
+}
+
 // stageSession materializes the embedded tree and tfvars into the session dir.
-func stageSession(s *session.Session) error {
+func stageSession(s *session.Session, extra map[string]any) error {
 	if err := s.SetPhase("stage"); err != nil {
 		return err
 	}
@@ -411,7 +524,7 @@ func stageSession(s *session.Session) error {
 		return err
 	}
 	return terraform.WriteTfvars(s.TerraformDir(), s.Meta.Roles["vm"], s.Meta.Region,
-		s.Meta.Size, s.Meta.Image, s.Meta.Slug, s.SSHDir())
+		s.Meta.Size, s.Meta.Image, s.Meta.Slug, s.SSHDir(), extra)
 }
 
 func tfInit(ctx context.Context, r *terraform.Runner, s *session.Session) error {
@@ -428,7 +541,8 @@ func tfApply(ctx context.Context, r *terraform.Runner, s *session.Session) error
 	return r.Apply(ctx)
 }
 
-// fetchIP reads the root outputs and persists the address.
+// fetchIP reads the root outputs and persists the address (and DNS name
+// when the session has one).
 func fetchIP(ctx context.Context, r *terraform.Runner,
 	s *session.Session) (string, error) {
 	if err := s.SetPhase("outputs"); err != nil {
@@ -437,6 +551,11 @@ func fetchIP(ctx context.Context, r *terraform.Runner,
 	outputs, err := r.Outputs(ctx)
 	if err != nil {
 		return "", err
+	}
+	if outputs.FQDN != "" {
+		if err := s.SetFQDN(outputs.FQDN); err != nil {
+			return "", err
+		}
 	}
 	return outputs.IP, s.SetIP(outputs.IP)
 }

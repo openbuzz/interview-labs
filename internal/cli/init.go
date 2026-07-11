@@ -23,7 +23,7 @@ var isTTY = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 var roleLabels = map[provider.Role]string{
 	provider.RoleVM:     "Cloud VM",
 	provider.RoleAI:     "AI Tooling",
-	provider.RoleAccess: "Cloud VM Access",
+	provider.RoleAccess: "DNS / access",
 }
 
 func menuRow(p provider.Provider, cfg config.Config) string {

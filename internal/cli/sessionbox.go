@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/openbuzz/interview-labs/internal/session"
@@ -27,14 +28,24 @@ func sessionBox(s *session.Session) string {
 	rows := []string{
 		fmt.Sprintf("%-10s%s", "status", s.Meta.Status),
 		fmt.Sprintf("%-10s%s", "provider", s.Meta.Roles["vm"]),
-		fmt.Sprintf("%-10s%s", "ip", ip),
+	}
+	if s.Meta.AIKeyHash != "" {
+		cap := strconv.FormatFloat(s.Meta.AICapUSD, 'f', -1, 64)
+		rows = append(rows, fmt.Sprintf("%-10s%s (cap $%s)", "ai",
+			s.Meta.Roles["ai"], cap))
+	}
+	rows = append(rows, fmt.Sprintf("%-10s%s", "ip", ip))
+	if s.Meta.FQDN != "" {
+		rows = append(rows, fmt.Sprintf("%-10s%s", "dns", s.Meta.FQDN))
+	}
+	rows = append(rows,
 		fmt.Sprintf("%-10s%s", "os", s.Meta.Image),
 		fmt.Sprintf("%-10s%s", "ssh user", s.Meta.SSHUser),
 		fmt.Sprintf("%-10s%s", "region", s.Meta.Region),
 		fmt.Sprintf("%-10s%s", "size", s.Meta.Size),
 		fmt.Sprintf("%-10s%s", "created",
 			s.Meta.CreatedAt.Local().Format("2006-01-02 15:04 -07:00")),
-	}
+	)
 	return ui.Box("Session "+s.Meta.Slug, style, rows...)
 }
 

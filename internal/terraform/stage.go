@@ -31,15 +31,20 @@ func Stage(dst string) error {
 	})
 }
 
-// WriteTfvars writes terraform.tfvars.json (auto-loaded by tf).
-func WriteTfvars(dir, provider, region, size, image, slug, sshDir string) error {
-	vars := map[string]string{
+// WriteTfvars writes terraform.tfvars.json (auto-loaded by tf); extra
+// carries capability-provider variables merged over the base six.
+func WriteTfvars(dir, provider, region, size, image, slug, sshDir string,
+	extra map[string]any) error {
+	vars := map[string]any{
 		"cloud_provider": provider,
 		"region":         region,
 		"size":           size,
 		"image":          image,
 		"slug":           slug,
 		"ssh_dir":        sshDir,
+	}
+	for k, v := range extra {
+		vars[k] = v
 	}
 	data, err := json.MarshalIndent(vars, "", "  ")
 	if err != nil {
