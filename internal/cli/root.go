@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/aws"
@@ -33,6 +35,60 @@ func IsUsage(err error) bool {
 	return errors.As(err, &u)
 }
 
+// verbose streams raw terraform output instead of quiet phase rows.
+var verbose bool
+
+// quietOutput reports whether phases render as spinner rows: interactive
+// terminal, not overridden by --verbose. Pipes and CI always stream.
+func quietOutput() bool { return isTTY() && !verbose }
+
+const actionExit = "exit"
+
+// pickMainAction is a seam; production shows the main menu.
+var pickMainAction = func() (string, error) {
+	opts := []huh.Option[string]{
+		huh.NewOption("Doctor   — check tools and credentials", "doctor"),
+		huh.NewOption("Init     — configure cloud providers", "init"),
+		huh.NewOption("Launch   — deploy a session VM", "launch"),
+		huh.NewOption("List     — show sessions", "list"),
+		huh.NewOption("SSH      — open a shell on a session VM", "ssh"),
+		huh.NewOption("Destroy  — tear a session down", "destroy"),
+		huh.NewOption("Exit", actionExit),
+	}
+
+	var sel string
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().Title("What do you want to do?").
+			Options(opts...).Value(&sel),
+	)).WithTheme(ui.Theme()).Run()
+	if errors.Is(err, huh.ErrUserAborted) {
+		return actionExit, nil // ESC behaves like Exit
+	}
+	if err != nil {
+		return "", err
+	}
+	return sel, nil
+}
+
+// runSubcommand is a seam; production executes one subcommand on a fresh
+// command tree so flag and arg state never bleeds between menu picks. out
+// and errW are threaded from the caller so output lands on the same writers
+// as the bare-root invocation instead of the process's real stdout/stderr.
+// Assigned from init, not inline: its default calls newRootCmd, whose RunE
+// calls back into runSubcommand — an inline initializer is a Go
+// initialization cycle (runSubcommand -> newRootCmd -> runSubcommand).
+var runSubcommand func(ctx context.Context, name string, out, errW io.Writer) error
+
+func init() {
+	runSubcommand = func(ctx context.Context, name string, out, errW io.Writer) error {
+		c := newRootCmd()
+		c.SetArgs([]string{name})
+		c.SetOut(out)
+		c.SetErr(errW)
+		return c.ExecuteContext(ctx)
+	}
+}
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "interview",
@@ -51,8 +107,29 @@ Start with "interview doctor", then "interview init".`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		RunE:          func(cmd *cobra.Command, args []string) error { return cmd.Help() },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isTTY() {
+				return cmd.Help()
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), ui.Logo())
+
+			for {
+				action, err := pickMainAction()
+				if err != nil {
+					return err
+				}
+				if action == actionExit {
+					return nil
+				}
+				out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
+				if err := runSubcommand(cmd.Context(), action, out, errW); err != nil {
+					fmt.Fprintf(errW, "error: %v\n", err)
+				}
+			}
+		},
 	}
+	root.PersistentFlags().BoolVar(&verbose, "verbose", false,
+		"stream terraform output instead of progress rows")
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newLaunchCmd())

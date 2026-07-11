@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"testing"
 
 	"github.com/openbuzz/interview-labs/internal/config"
@@ -64,12 +65,19 @@ func TestIdentityAndStatics(t *testing.T) {
 }
 
 func TestRegionsCurated(t *testing.T) {
-	var cfg config.Config
-	got, err := (aw{}).Regions(t.Context(), cfg)
+	got, err := (aw{}).Regions(context.Background(), config.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 4 || got[0].Slug != "eu-central-1" {
-		t.Fatalf("regions = %+v", got)
+
+	want := []string{"eu-central-1", "eu-west-1", "us-east-2", "us-west-2",
+		"sa-east-1", "ap-south-1", "ap-southeast-1", "ap-northeast-1"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].Slug != w {
+			t.Fatalf("region[%d] = %s, want %s", i, got[i].Slug, w)
+		}
 	}
 }

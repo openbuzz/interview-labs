@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openbuzz/interview-labs/internal/session"
 )
@@ -62,5 +66,58 @@ func TestListShowsVMProvider(t *testing.T) {
 
 	if !strings.Contains(out, "PROVIDER") || !strings.Contains(out, "digitalocean") {
 		t.Fatalf("list missing provider column:\n%s", out)
+	}
+}
+
+func writeListSession(t *testing.T, slug, ip, status string, age time.Duration) {
+	t.Helper()
+	root, err := session.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "sessions", slug)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := fmt.Sprintf(`{"schema":2,"slug":"%s","created_at":"%s",
+"region":"fra1","size":"s-2vcpu-2gb","image":"ubuntu-26-04-x64",
+"roles":{"vm":"digitalocean"},"ssh_user":"root",
+"terraform":{"binary":"terraform","version":"1.9.0"},
+"ip":"%s","status":"%s","phase":"summary"}`,
+		slug, time.Now().UTC().Add(-age).Format(time.RFC3339), ip, status)
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"),
+		[]byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListAlignsLongSlugsAndDashesEmptyIP(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	writeListSession(t, "extraordinarily-photogenic-mongoose-x9k2",
+		"203.0.113.7", "ready", 90*time.Minute)
+	writeListSession(t, "tiny-ant-1a2b", "", "failed", 5*time.Minute)
+
+	out, code := runCmd(t, "list")
+
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want header+2 rows, got %d lines:\n%s", len(lines), out)
+	}
+
+	head := lines[0]
+	for _, l := range lines[1:] {
+		if strings.Index(head, "PROVIDER") != strings.Index(l, "digitalocean") {
+			t.Fatalf("PROVIDER column misaligned:\n%s", out)
+		}
+		if strings.Index(head, "STATUS") == -1 {
+			t.Fatalf("missing STATUS header:\n%s", out)
+		}
+	}
+	if !strings.Contains(lines[2], " -") && !strings.Contains(lines[1], " -") {
+		t.Fatalf("empty IP not dashed:\n%s", out)
 	}
 }

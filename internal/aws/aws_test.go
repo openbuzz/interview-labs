@@ -2,13 +2,14 @@ package aws
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -17,15 +18,6 @@ func stsClient(t *testing.T, handler http.Handler) *sts.Client {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return NewSTS("k", "s", func(o *sts.Options) {
-		o.BaseEndpoint = awssdk.String(srv.URL)
-	})
-}
-
-func ec2Client(t *testing.T, handler http.Handler) *ec2.Client {
-	t.Helper()
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	return NewEC2("k", "s", "eu-central-1", func(o *ec2.Options) {
 		o.BaseEndpoint = awssdk.String(srv.URL)
 	})
 }
@@ -64,36 +56,45 @@ func TestValidateCredsRejected(t *testing.T) {
 	}
 }
 
-func TestInstanceTypesFiltersAndSorts(t *testing.T) {
-	c := ec2Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/xml")
-		w.Write([]byte(`<DescribeInstanceTypesResponse
-  xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
-  <requestId>x</requestId>
-  <instanceTypeSet>
-    <item><instanceType>m7i.2xlarge</instanceType>
-      <vCpuInfo><defaultVCpus>8</defaultVCpus></vCpuInfo>
-      <memoryInfo><sizeInMiB>32768</sizeInMiB></memoryInfo></item>
-    <item><instanceType>c7i.xlarge</instanceType>
-      <vCpuInfo><defaultVCpus>4</defaultVCpus></vCpuInfo>
-      <memoryInfo><sizeInMiB>8192</sizeInMiB></memoryInfo></item>
-    <item><instanceType>m7i.xlarge</instanceType>
-      <vCpuInfo><defaultVCpus>4</defaultVCpus></vCpuInfo>
-      <memoryInfo><sizeInMiB>16384</sizeInMiB></memoryInfo></item>
-  </instanceTypeSet>
-</DescribeInstanceTypesResponse>`))
-	}))
-	got, err := InstanceTypes(context.Background(), c)
-	if err != nil {
-		t.Fatal(err)
+func TestInstanceTypesStaticTable(t *testing.T) {
+	got := InstanceTypes()
+
+	if len(got) != 16 {
+		t.Fatalf("len = %d, want 16 (4 families x 4 sizes)", len(got))
 	}
 
-	// c7i is not an m-family; m7i.xlarge (4 vCPU) sorts before m7i.2xlarge.
-	if len(got) != 2 || got[0].Slug != "m7i.xlarge" || got[1].Slug != "m7i.2xlarge" {
-		t.Fatalf("InstanceTypes() = %+v", got)
+	prices := map[string]float64{}
+	for _, o := range got {
+		var vcpu, mem int
+		var price float64
+		var name string
+		_, err := fmt.Sscanf(o.Label, "%s %dvcpu %dGB ~$%f/hr", &name, &vcpu, &mem, &price)
+		if err != nil || name != o.Slug {
+			t.Fatalf("label %q does not parse: %v", o.Label, err)
+		}
+		prices[o.Slug] = price
 	}
-	want := "m7i.xlarge  4 vCPU, 16 GiB"
-	if got[0].Label != want {
-		t.Fatalf("label = %q, want %q", got[0].Label, want)
+
+	// Labels round to whole cents (~$%.2f), so family doubling is asserted
+	// within the compounded rounding tolerance (8x half-cent = 4c).
+	if math.Abs(prices["m7i.xlarge"]-2*prices["m7i.large"]) > 0.05 ||
+		math.Abs(prices["m7i.4xlarge"]-8*prices["m7i.large"]) > 0.05 {
+		t.Fatalf("family prices not doubling: %v", prices)
+	}
+
+	for i := 1; i < len(got); i++ {
+		if prices[got[i].Slug] < prices[got[i-1].Slug] {
+			t.Fatalf("not sorted cheapest first at %s", got[i].Slug)
+		}
+	}
+}
+
+func TestInstanceTypesX86Only(t *testing.T) {
+	for _, o := range InstanceTypes() {
+		for _, arm := range []string{"m7g", "m8g", "t4g", "c7g"} {
+			if strings.HasPrefix(o.Slug, arm+".") {
+				t.Fatalf("ARM type offered: %s", o.Slug)
+			}
+		}
 	}
 }

@@ -200,34 +200,61 @@ func ensureRegionSize(ctx context.Context, vm provider.VM, cfg *config.Config,
 	return cfg.Write()
 }
 
-// runLaunch drives the launch phases; each helper persists its phase first so
-// a failure names where it died.
+// step runs one launch/destroy phase: a spinner row when quiet, plain
+// passthrough when verbose.
+func step(out io.Writer, quiet bool, title string, fn func() error) error {
+	if !quiet {
+		return fn()
+	}
+	return ui.Step(out, title, func(func(string)) error { return fn() })
+}
+
+// runLaunch drives the launch phases; quiet mode renders each as a step row
+// and keeps terraform output in the session logs only.
 func runLaunch(ctx context.Context, out io.Writer,
 	creds map[string]string, bin terraform.Binary, s *session.Session) error {
-	runner, err := newSessionRunner(out, creds, bin, s)
+	quiet := quietOutput()
+	runnerOut := out
+	if quiet {
+		runnerOut = io.Discard
+	}
+	runner, err := newSessionRunner(runnerOut, creds, bin, s)
 	if err != nil {
 		return err
 	}
 
-	if err := stageSession(s); err != nil {
+	if err := step(out, quiet, "stage", func() error {
+		return stageSession(s)
+	}); err != nil {
 		return err
 	}
-	if err := tfInit(ctx, runner, s); err != nil {
+	if err := step(out, quiet, "terraform init", func() error {
+		return tfInit(ctx, runner, s)
+	}); err != nil {
 		return err
 	}
-	if err := tfApply(ctx, runner, s); err != nil {
-		return err
-	}
-	ip, err := fetchIP(ctx, runner, s)
-	if err != nil {
+	var ip string
+	if err := step(out, quiet, "terraform apply", func() error {
+		if err := tfApply(ctx, runner, s); err != nil {
+			return err
+		}
+		var ipErr error
+		ip, ipErr = fetchIP(ctx, runner, s)
+		return ipErr
+	}); err != nil {
 		return err
 	}
 
-	client, err := waitSSH(ctx, s, ip)
-	if err != nil {
+	var client *ssh.Client
+	if err := step(out, quiet, "wait-ssh", func() error {
+		var dialErr error
+		client, dialErr = waitSSH(ctx, s, ip)
+		return dialErr
+	}); err != nil {
 		return err
 	}
 	defer client.Close()
+
 	if err := greet(ctx, out, client, s); err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package digitalocean
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/openbuzz/interview-labs/internal/config"
 	"github.com/openbuzz/interview-labs/internal/provider"
+	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 func TestProviderIdentity(t *testing.T) {
@@ -34,36 +36,70 @@ func TestConfigured(t *testing.T) {
 	}
 }
 
-func TestConfigureStoresValidatedToken(t *testing.T) {
+func TestConfigureValidatesWithRetries(t *testing.T) {
+	old := provider.RetryDelays
+	provider.RetryDelays = nil // no sleeps in tests
+	t.Cleanup(func() { provider.RetryDelays = old })
+	oldUI := ui.Interactive
+	ui.Interactive = func() bool { return false }
+	t.Cleanup(func() { ui.Interactive = oldUI })
+
 	var buf bytes.Buffer
 	oldOut, oldPrompt, oldValidate := out, promptToken, validateToken
-	t.Cleanup(func() { out, promptToken, validateToken = oldOut, oldPrompt, oldValidate })
 	out = &buf
-	validated := ""
-	validateToken = func(_ context.Context, tok string) error { validated = tok; return nil }
 	promptToken = func(validate func(string) error) (string, error) {
-		if err := validate("dop_v1_x"); err != nil {
-			return "", err
+		if err := validate(""); err == nil {
+			t.Fatal("empty token accepted")
 		}
-		return "dop_v1_x", nil
+		return "tok-123", nil
 	}
+	calls := 0
+	validateToken = func(ctx context.Context, token string) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { out, promptToken, validateToken = oldOut, oldPrompt, oldValidate })
 
 	var cfg config.Config
-	if err := New().Configure(context.Background(), &cfg); err != nil {
+	if err := (do{}).Configure(context.Background(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 
-	if cfg.Providers.DigitalOcean.Token != "dop_v1_x" || validated != "dop_v1_x" {
-		t.Fatalf("token = %q validated = %q", cfg.Providers.DigitalOcean.Token, validated)
+	if cfg.Providers.DigitalOcean.Token != "tok-123" || calls != 1 {
+		t.Fatalf("token=%q calls=%d", cfg.Providers.DigitalOcean.Token, calls)
 	}
-	for _, want := range []string{
-		"How to create a DigitalOcean API token",
-		"https://cloud.digitalocean.com/account/api/tokens",
-		"token stored",
-	} {
-		if !strings.Contains(buf.String(), want) {
-			t.Fatalf("output missing %q:\n%s", want, buf.String())
-		}
+	if !strings.Contains(buf.String(), "Testing credentials…") {
+		t.Fatalf("missing banner:\n%s", buf.String())
+	}
+}
+
+func TestConfigureRejectedStoresNothing(t *testing.T) {
+	old := provider.RetryDelays
+	provider.RetryDelays = nil
+	t.Cleanup(func() { provider.RetryDelays = old })
+	oldUI := ui.Interactive
+	ui.Interactive = func() bool { return false }
+	t.Cleanup(func() { ui.Interactive = oldUI })
+
+	var buf bytes.Buffer
+	oldOut, oldPrompt, oldValidate := out, promptToken, validateToken
+	out = &buf
+	promptToken = func(func(string) error) (string, error) { return "bad", nil }
+	validateToken = func(context.Context, string) error {
+		return errors.New("401 unauthorized")
+	}
+	t.Cleanup(func() { out, promptToken, validateToken = oldOut, oldPrompt, oldValidate })
+
+	var cfg config.Config
+	if err := (do{}).Configure(context.Background(), &cfg); err != nil {
+		t.Fatal(err) // failure is reported, not returned
+	}
+
+	if cfg.Providers.DigitalOcean.Token != "" {
+		t.Fatalf("rejected token stored: %q", cfg.Providers.DigitalOcean.Token)
+	}
+	if !strings.Contains(buf.String(), "401 unauthorized") {
+		t.Fatalf("missing fail row:\n%s", buf.String())
 	}
 }
 

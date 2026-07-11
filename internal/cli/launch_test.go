@@ -14,6 +14,7 @@ import (
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	sshtest "github.com/openbuzz/interview-labs/internal/ssh"
+	"github.com/openbuzz/interview-labs/internal/ui"
 )
 
 // fakeTFForLaunch installs a fake terraform that emits an ip output and, on apply,
@@ -346,5 +347,83 @@ func TestLaunchAWSPipeline(t *testing.T) {
 		if !strings.Contains(string(envDump), want) {
 			t.Fatalf("terraform child env missing %s", want)
 		}
+	}
+}
+
+func TestLaunchQuietRendersPhaseRows(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, true)
+	oldUI := ui.Interactive
+	ui.Interactive = func() bool { return false } // plain step lines, no ANSI redraw
+	t.Cleanup(func() { ui.Interactive = oldUI })
+	// swapTTY(true) also routes selectVMProvider through the real huh picker;
+	// stub it like the sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
+	oldPick := pickVMProvider
+	t.Cleanup(func() { pickVMProvider = oldPick })
+	pickVMProvider = func(configured []provider.Provider,
+		_ string) (provider.Provider, error) {
+		return configured[0], nil
+	}
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
+
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	for _, row := range []string{"stage", "terraform init", "terraform apply", "wait-ssh"} {
+		if !strings.Contains(out, ui.GlyphOK+" "+row) {
+			t.Fatalf("missing quiet row %q:\n%s", row, out)
+		}
+	}
+}
+
+func TestLaunchVerboseStreamsTerraform(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, true)
+	// swapTTY(true) also routes selectVMProvider through the real huh picker;
+	// stub it like the sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
+	oldPick := pickVMProvider
+	t.Cleanup(func() { pickVMProvider = oldPick })
+	pickVMProvider = func(configured []provider.Provider,
+		_ string) (provider.Provider, error) {
+		return configured[0], nil
+	}
+
+	addr, privPEM, pub := sshtest.StartTestServer(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "--verbose", "launch",
+		"--region", "fra1", "--size", "s-1vcpu-1gb")
+
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if strings.Contains(out, ui.GlyphOK+" terraform apply") {
+		t.Fatalf("verbose mode rendered quiet rows:\n%s", out)
 	}
 }

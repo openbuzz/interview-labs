@@ -70,7 +70,8 @@ func ServerTypesFor(ctx context.Context, c *hcloud.Client,
 	}
 	var rows []row
 	for _, st := range types {
-		if st.IsDeprecated() {
+		// amd64-only policy: deprecated and ARM (cax) types are not offered.
+		if st.IsDeprecated() || st.Architecture != hcloud.ArchitectureX86 {
 			continue
 		}
 		hourly, monthly, ok := priceIn(st, location)

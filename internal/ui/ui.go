@@ -2,10 +2,12 @@
 package ui
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 )
 
 // Semantic styles — ANSI-16 indices only; hues come from the user's terminal theme.
@@ -101,3 +103,6 @@ func Theme() *huh.Theme {
 	t.Focused.ErrorMessage = t.Focused.ErrorMessage.Foreground(lipgloss.Color("1"))
 	return t
 }
+
+// Interactive is a seam: whether stdout can host live redraw (spinners).
+var Interactive = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }

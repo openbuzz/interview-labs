@@ -40,8 +40,7 @@ func (aw) Regions(ctx context.Context, cfg config.Config) ([]provider.Option, er
 
 func (aw) Sizes(ctx context.Context, cfg config.Config,
 	region string) ([]provider.Option, error) {
-	id, secret := creds(cfg)
-	return InstanceTypes(ctx, NewEC2(id, secret, region))
+	return InstanceTypes(), nil
 }
 
 func (aw) Defaults(cfg config.Config) (string, string) {

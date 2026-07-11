@@ -84,25 +84,27 @@ func (aw) Configured(cfg config.Config) bool {
 }
 
 // Configure shows the IAM guidance, prompts for the credential pair,
-// validates it against STS, stores it.
+// validates it with retries, stores it.
 func (aw) Configure(ctx context.Context, cfg *config.Config) error {
 	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
 	fmt.Fprintln(out, ui.Faint.Render(
 		"The IAM user credentials are validated before they are stored (0600)."))
 
-	for {
-		keyID, secret, err := promptCreds()
-		if err != nil {
-			return err
-		}
-		if err := validatePair(ctx, keyID, secret); err != nil {
-			fmt.Fprintln(out, ui.RowFail("credentials", err.Error()))
-			continue
-		}
+	keyID, secret, err := promptCreds()
+	if err != nil {
+		return err
+	}
 
-		cfg.Providers.AWS.AccessKeyID = keyID
-		cfg.Providers.AWS.SecretAccessKey = secret
-		fmt.Fprintln(out, ui.RowOK("credentials", "IAM user credentials stored"))
+	if err := provider.TestCredentials(ctx, out, func(ctx context.Context) error {
+		return validatePair(ctx, keyID, secret)
+	}); err != nil {
+		fmt.Fprintln(out, ui.RowFail("credentials",
+			"credentials rejected — nothing stored"))
 		return nil
 	}
+
+	cfg.Providers.AWS.AccessKeyID = keyID
+	cfg.Providers.AWS.SecretAccessKey = secret
+	fmt.Fprintln(out, ui.RowOK("credentials", "valid — IAM user credentials stored"))
+	return nil
 }

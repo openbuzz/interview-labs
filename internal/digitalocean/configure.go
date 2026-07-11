@@ -66,7 +66,7 @@ func (do) Roles() []provider.Role { return []provider.Role{provider.RoleVM} }
 
 func (do) Configured(cfg config.Config) bool { return token(cfg) != "" }
 
-// Configure shows the token guidance, prompts, validates, stores the token.
+// Configure shows the token guidance, prompts, validates with retries, stores.
 func (do) Configure(ctx context.Context, cfg *config.Config) error {
 	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
 	fmt.Fprintln(out, ui.Faint.Render("The token is validated before it is stored (0600)."))
@@ -75,13 +75,20 @@ func (do) Configure(ctx context.Context, cfg *config.Config) error {
 		if t == "" {
 			return fmt.Errorf("token is empty")
 		}
-		return validateToken(ctx, t)
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 
+	if err := provider.TestCredentials(ctx, out, func(ctx context.Context) error {
+		return validateToken(ctx, token)
+	}); err != nil {
+		fmt.Fprintln(out, ui.RowFail("credentials", "token rejected — nothing stored"))
+		return nil
+	}
+
 	cfg.Providers.DigitalOcean.Token = token
-	fmt.Fprintln(out, ui.RowOK("credentials", "token stored"))
+	fmt.Fprintln(out, ui.RowOK("credentials", "valid — token stored"))
 	return nil
 }

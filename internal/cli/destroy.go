@@ -72,7 +72,11 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 	}
 	defer release()
 
-	runner, err := destroyRunner(out, s)
+	runnerOut := io.Writer(out)
+	if quietOutput() {
+		runnerOut = io.Discard
+	}
+	runner, err := destroyRunner(out, runnerOut, s)
 	if err != nil {
 		return err
 	}
@@ -80,8 +84,10 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 }
 
 // destroyRunner rebuilds the runner for a session, preferring the binary that
-// applied it and warning when falling back.
-func destroyRunner(out io.Writer, s *session.Session) (*terraform.Runner, error) {
+// applied it and warning when falling back. The fallback warning always goes
+// to out; runnerOut feeds the Runner's own Out field (routed when quiet).
+func destroyRunner(out, runnerOut io.Writer,
+	s *session.Session) (*terraform.Runner, error) {
 	bin, err := terraform.FindNamed(s.Meta.Terraform.Binary)
 	if err != nil {
 		bin, err = terraform.Find()
@@ -112,7 +118,7 @@ func destroyRunner(out io.Writer, s *session.Session) (*terraform.Runner, error)
 	return &terraform.Runner{
 		Bin: bin, Dir: s.TerraformDir(),
 		Env:     terraform.RunEnv(vm.EnvCreds(cfg), cache),
-		LogsDir: s.LogsDir(), Out: out,
+		LogsDir: s.LogsDir(), Out: runnerOut,
 	}, nil
 }
 
@@ -120,11 +126,16 @@ func destroyRunner(out io.Writer, s *session.Session) (*terraform.Runner, error)
 // failed-destroy status and point at the logs.
 func runDestroy(ctx context.Context, out io.Writer,
 	r *terraform.Runner, s *session.Session) error {
+	quiet := quietOutput()
 	s.SetStatus(session.StatusDestroying)
-	if err := r.Init(ctx); err != nil {
+	if err := step(out, quiet, "terraform init", func() error {
+		return r.Init(ctx)
+	}); err != nil {
 		return failDestroy(out, s, err)
 	}
-	if err := r.Destroy(ctx); err != nil {
+	if err := step(out, quiet, "terraform destroy", func() error {
+		return r.Destroy(ctx)
+	}); err != nil {
 		return failDestroy(out, s, err)
 	}
 

@@ -44,3 +44,71 @@ func TestUsageError(t *testing.T) {
 		t.Fatal("IsUsage(plain error) = true")
 	}
 }
+
+func TestBareRootNonTTYShowsHelp(t *testing.T) {
+	swapTTY(t, false)
+
+	out, code := runCmd(t)
+
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	// Brief checks for the Short string "disposable interview lab VMs", but
+	// cobra's defaultHelpFunc only falls back to Short when Long is empty
+	// (command.go: usage := c.Long; if usage == "" { usage = c.Short }) —
+	// root.Long is set, so Short never renders. Matching the substring
+	// TestRootHelpListsCommandsWithBanner already verifies for this same
+	// non-TTY help path instead.
+	if !strings.Contains(out, "one disposable VM per interview") {
+		t.Fatalf("help not shown:\n%s", out)
+	}
+}
+
+func TestBareRootTTYRunsMenuLoop(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	swapTTY(t, true)
+
+	picks := []string{"list", actionExit}
+	oldPick := pickMainAction
+	pickMainAction = func() (string, error) {
+		p := picks[0]
+		picks = picks[1:]
+		return p, nil
+	}
+	t.Cleanup(func() { pickMainAction = oldPick })
+
+	out, code := runCmd(t)
+
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "no sessions") {
+		t.Fatalf("list not dispatched:\n%s", out)
+	}
+	if len(picks) != 0 {
+		t.Fatal("menu loop did not continue after the action")
+	}
+}
+
+func TestBareRootTTYSubcommandErrorKeepsLooping(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	swapTTY(t, true)
+
+	picks := []string{"ssh", actionExit} // no sessions → ssh errors
+	oldPick := pickMainAction
+	pickMainAction = func() (string, error) {
+		p := picks[0]
+		picks = picks[1:]
+		return p, nil
+	}
+	t.Cleanup(func() { pickMainAction = oldPick })
+
+	_, code := runCmd(t)
+
+	if code != 0 {
+		t.Fatalf("exit = %d — a failed action must not kill the menu", code)
+	}
+	if len(picks) != 0 {
+		t.Fatal("menu loop stopped after the failed action")
+	}
+}
