@@ -19,6 +19,7 @@
 ┃ > ○ DigitalOcean  — Cloud VM
 ┃   ○ Hetzner  — Cloud VM
 ┃   ○ AWS  — Cloud VM
+┃   ○ Local Docker  — Cloud VM
 ┃   ○ OpenRouter  — AI Tooling
 ┃   ○ Cloudflare  — DNS / access
 ┃   exit
@@ -30,6 +31,7 @@
 │  ○ DigitalOcean  — Cloud VM                                          │
 │  ○ Hetzner  — Cloud VM                                               │
 │  ○ AWS  — Cloud VM                                                   │
+│  ○ Local Docker  — Cloud VM                                          │
 │  ○ OpenRouter  — AI Tooling                                          │
 │  ○ Cloudflare  — DNS / access                                        │
 │                                                                      │

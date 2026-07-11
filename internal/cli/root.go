@@ -17,6 +17,7 @@ import (
 	"github.com/openbuzz/interview-labs/internal/cloudflare"
 	"github.com/openbuzz/interview-labs/internal/digitalocean"
 	"github.com/openbuzz/interview-labs/internal/hetzner"
+	"github.com/openbuzz/interview-labs/internal/localvm"
 	"github.com/openbuzz/interview-labs/internal/openrouter"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/ui"
@@ -24,7 +25,8 @@ import (
 
 // providers is the registry, in menu order.
 var providers = []provider.Provider{
-	digitalocean.New(), hetzner.New(), aws.New(), openrouter.New(), cloudflare.New(),
+	digitalocean.New(), hetzner.New(), aws.New(), localvm.New(),
+	openrouter.New(), cloudflare.New(),
 }
 
 type usageErr struct{ msg string }

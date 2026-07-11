@@ -121,3 +121,19 @@ func TestListAlignsLongSlugsAndDashesEmptyIP(t *testing.T) {
 		t.Fatalf("empty IP not dashed:\n%s", out)
 	}
 }
+
+func TestListShowsLocalSession(t *testing.T) {
+	blankCloudEnv(t)
+	_ = fakeDocker(t)
+	if out, code := runCmd(t, "launch"); code != 0 {
+		t.Fatalf("launch: %d\n%s", code, out)
+	}
+
+	out, code := runCmd(t, "list")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "local") || !strings.Contains(out, "ready") {
+		t.Fatalf("list output:\n%s", out)
+	}
+}

@@ -2,17 +2,23 @@
 
 *Stop testing answers. Start testing work.*
 
-`interview` deploys a disposable cloud VM per interview session — DigitalOcean, Hetzner
-Cloud, or AWS — connects over SSH, and tears it down when you are done.
-When configured, each session also gets a spend-capped OpenRouter API key (minted at
-launch, revoked at destroy) and a proxied Cloudflare DNS record (`<slug>.<your-domain>`).
+`interview` deploys a disposable interview environment per session — a cloud VM on
+DigitalOcean, Hetzner Cloud, or AWS, or containers on your own machine via the `local`
+provider. Each session runs the interview stack: a password-gated web gateway, a
+browser VS Code workspace (four profiles: `backend`, `devops`, `backend-ai`,
+`devops-ai`), and an isolated docker daemon for the candidate. Cloud VMs install
+docker via cloud-init and build the stack from source at launch; the handover prints
+the session URL and gateway password.
+When configured, `-ai` sessions also get a spend-capped OpenRouter API key (minted at
+launch, revoked at destroy) and every cloud session a proxied Cloudflare DNS record
+(`<slug>.<your-domain>`).
 Sessions run in parallel; state lives under your XDG directories and survives restarts.
 
 ## Requirements
 
 - terraform or opentofu on PATH (terraform preferred when both exist)
-- credentials for at least one provider: a DigitalOcean API token, a Hetzner Cloud API
-  token, or AWS IAM user credentials
+- credentials for at least one cloud provider (DigitalOcean/Hetzner/AWS token), or
+  just a running docker engine for local sessions
 - optional: an ssh client for `interview ssh`
 - optional: an OpenRouter management key (mints per-session API keys) and a Cloudflare
   API token + zone for per-session DNS
@@ -28,10 +34,11 @@ go install github.com/openbuzz/interview-labs/cmd/interview@latest
 ```sh
 interview doctor    # check tools, dirs, credentials
 interview init      # configure cloud providers
-interview launch    # pick region and size, deploy, mint AI key/DNS, prints Hello world from the VM
+interview launch    # pick provider, profile, region and size; builds and starts the stack
 interview list      # sessions with age and status
 interview info      # one session's details: IP, OS, ssh line
 interview ssh       # shell into a session VM
+# local sessions: "interview ssh" execs into the vscode container instead
 interview destroy   # tear a session down
 ```
 
@@ -39,10 +46,17 @@ Pass `--no-ai` / `--no-dns` to skip the per-session AI key or DNS record when th
 providers are configured. The proxied DNS URL serves nothing until the VM hosts a web
 service (Cloudflare answers 522) — it is groundwork.
 
+`--profile` picks the vscode stack (`backend`, `devops`, `backend-ai`, `devops-ai`;
+non-interactive default `devops`). `-ai` profiles read the minted OpenRouter key from
+the environment at start — the key value is never written to disk on either side.
+Local sessions bind `http://localhost:8080` with the fixed password `openbuzz`; cloud
+sessions serve `http://<ip>` (port 80) — or `http://<slug>.<domain>` with Cloudflare —
+with a random per-session password (shown in the handover and `interview info`).
+
 Non-interactive use: set a provider env var (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, or
 `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`; `OPENROUTER_MANAGEMENT_KEY` and
-`CLOUDFLARE_API_TOKEN` override their config entries) and pass `--region`/`--size` to
-launch, `--yes` to destroy.
+`CLOUDFLARE_API_TOKEN` override their config entries) and pass
+`--region`/`--size`/`--profile` to launch, `--yes` to destroy.
 
 ## State
 
@@ -73,6 +87,7 @@ launch, `--yes` to destroy.
 
   roles:
     vm: hetzner
+  profile: devops-ai  # remembered stack-profile pick
   ```
 
 - sessions: `$XDG_STATE_HOME/interview/sessions/<slug>/` — terraform state, ssh key,

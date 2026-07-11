@@ -213,6 +213,7 @@ func TestLaunchNoTokenFails(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	t.Setenv("PATH", t.TempDir()) // no docker ⇒ local stays unconfigured
 
 	out, code := runCmd(t, "launch", "--region", "fra1", "--size", "s-1vcpu-1gb")
 	if code != 1 {
@@ -233,6 +234,7 @@ func TestLaunchFailsWithoutConfiguredProvider(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	t.Setenv("PATH", t.TempDir()) // no docker ⇒ local stays unconfigured
 
 	out, code := runCmd(t, "launch")
 

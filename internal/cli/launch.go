@@ -254,8 +254,8 @@ The VM bills hourly until "interview destroy".`,
 	return cmd
 }
 
-// runLaunchCmd resolves provider and profile, then hands off to the cloud
-// pipeline (the local pipeline arrives in plan 3).
+// runLaunchCmd resolves provider and profile, then dispatches on whether the
+// pick has the VM capability: cloud provider vs. the local pseudo-provider.
 func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 	out := cmd.OutOrStdout()
 	cfg, err := config.Load()
@@ -275,7 +275,7 @@ func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 	}
 	vm, ok := sel.(provider.VM)
 	if !ok {
-		return fmt.Errorf("provider %s cannot host a session VM", sel.Name())
+		return runLocalLaunch(cmd, out, cfg, sel, profile, f.noAI)
 	}
 	return runCloudLaunch(cmd, out, cfg, vm, profile, f)
 }

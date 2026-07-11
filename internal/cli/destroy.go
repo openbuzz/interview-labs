@@ -16,9 +16,14 @@ import (
 // confirmDestroy is a seam; production asks via huh.
 var confirmDestroy = func(s *session.Session) (bool, error) {
 	ok := false
+	target := fmt.Sprintf("(%s, %s)", s.Meta.IP, s.Meta.Region)
+	desc := "Removes the VM and firewall; logs are archived locally."
+	if isLocalSession(s) {
+		target = "(local docker)"
+		desc = "Stops the local stack and removes its volumes; logs are archived."
+	}
 	err := ui.ConfirmForm(
-		fmt.Sprintf("Destroy %s (%s, %s)?", s.Meta.Slug, s.Meta.IP, s.Meta.Region),
-		"Removes the VM and firewall; logs are archived locally.", &ok)
+		fmt.Sprintf("Destroy %s %s?", s.Meta.Slug, target), desc, &ok)
 	return ok, err
 }
 
@@ -68,6 +73,9 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	if isLocalSession(s) {
+		return runLocalDestroy(cmd.Context(), out, cfg, s)
 	}
 	runnerOut := io.Writer(out)
 	if quietOutput() {
@@ -155,6 +163,31 @@ func runDestroy(ctx context.Context, out io.Writer, cfg config.Config,
 	}
 	if err := step(out, quiet, "terraform destroy", func() error {
 		return r.Destroy(ctx)
+	}); err != nil {
+		return failDestroy(out, s, err)
+	}
+	if err := revokeAIKey(ctx, out, quiet, cfg, s); err != nil {
+		return failDestroy(out, s, err)
+	}
+
+	if err := s.Archive(); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, ui.RowOK(s.Meta.Slug, "destroyed"))
+	fmt.Fprintln(out, ui.Next("interview launch"))
+	return nil
+}
+
+// runLocalDestroy tears the local stack down: compose down (volumes
+// included), key revoke, archive. No terraform. Reruns are safe — down on
+// an absent project succeeds.
+func runLocalDestroy(ctx context.Context, out io.Writer, cfg config.Config,
+	s *session.Session) error {
+	quiet := quietOutput()
+	s.SetStatus(session.StatusDestroying)
+	if err := step(out, quiet, "compose down", func() error {
+		return execDocker(ctx, out, quiet, s, "stack-down.log", "", nil,
+			"compose", "-p", "interview-"+s.Meta.Slug, "down", "-v")
 	}); err != nil {
 		return failDestroy(out, s, err)
 	}

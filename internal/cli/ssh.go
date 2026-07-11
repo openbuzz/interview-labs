@@ -42,12 +42,12 @@ var pickSession = func(all []*session.Session,
 	return huhPickSession(all, title, desc)
 }
 
-// execSSH is a seam; production replaces the process with host ssh.
-var execSSH = func(argv []string) error {
-	path, err := exec.LookPath("ssh")
+// execProgram is a seam; production replaces the process with argv's
+// program (host ssh for cloud sessions, docker exec for local ones).
+var execProgram = func(argv []string) error {
+	path, err := exec.LookPath(argv[0])
 	if err != nil {
-		return fmt.Errorf("ssh client not found — install openssh-client to use " +
-			"interview ssh")
+		return fmt.Errorf("%s not found on PATH", argv[0])
 	}
 	return syscall.Exec(path, argv, os.Environ())
 }
@@ -58,9 +58,10 @@ func newSSHCmd() *cobra.Command {
 		Short: "open a shell on a session VM",
 		Long: `Open an interactive shell on a session VM.
 
-Hands the terminal to the host ssh binary with the session's key and its
-pinned host key (per-session known_hosts). With several sessions, pass a
-slug or pick one from the menu.`,
+Cloud sessions hand the terminal to the host ssh binary with the
+session's key and its pinned host key (per-session known_hosts). Local
+sessions exec into the vscode container instead. With several sessions,
+pass a slug or pick one from the menu.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			printNarrowWarning(cmd.OutOrStdout())
@@ -73,11 +74,15 @@ slug or pick one from the menu.`,
 			if err != nil {
 				return err
 			}
+			if isLocalSession(s) {
+				return execProgram([]string{"docker", "exec", "-it",
+					"interview-" + s.Meta.Slug + "-vscode", "bash"})
+			}
 			if s.Meta.IP == "" {
 				return fmt.Errorf("session %s has no IP (status %s)",
 					s.Meta.Slug, s.Meta.Status)
 			}
-			return execSSH(ssh.Argv(
+			return execProgram(ssh.Argv(
 				s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, s.Meta.IP))
 		},
 	}
