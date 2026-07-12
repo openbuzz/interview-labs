@@ -2,9 +2,7 @@ name: interview-labs
 services:
   gateway:
     container_name: ${COMPOSE_PROJECT_NAME}-gateway
-    build:
-      context: ./images/gateway
-    image: interview-labs-gateway:local
+    image: ${GATEWAY_IMAGE:-ghcr.io/openbuzz/interview-labs-gateway:edge}
     environment:
       GATEWAY_PASSWORD: ${GATEWAY_PASSWORD}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
@@ -15,7 +13,7 @@ services:
         condition: service_healthy
   vscode:
     container_name: ${COMPOSE_PROJECT_NAME}-vscode
-    image: interview-labs-vscode:${VSCODE_PROFILE:-devops}-local
+    image: ${VSCODE_IMAGE:-ghcr.io/openbuzz/interview-labs-vscode:edge-devops}
     environment:
       DOCKER_HOST: tcp://dind:2375
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}

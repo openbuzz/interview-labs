@@ -1,6 +1,0 @@
-*
-!go.mod
-!*.go
-!*.html
-!*.css
-*_test.go

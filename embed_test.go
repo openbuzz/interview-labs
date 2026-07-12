@@ -35,3 +35,24 @@ func TestInfraFSHasSourcesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The docker embed carries exactly the compose file: build contexts stay in
+// the repo, images are pulled prebuilt.
+func TestDockerFSIsComposeOnly(t *testing.T) {
+	var files []string
+	err := fs.WalkDir(DockerFS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "docker/compose.yaml" {
+		t.Errorf("DockerFS files = %v, want docker/compose.yaml only", files)
+	}
+}

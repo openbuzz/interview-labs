@@ -7,9 +7,11 @@
 COMPOSE_CMD="docker compose -f ${BATS_TEST_DIRNAME}/../docker/compose.yaml"
 BASE_URL="http://localhost:8080"
 PASSWORD="${GATEWAY_PASSWORD:-openbuzz}"
+export GATEWAY_IMAGE="${GATEWAY_IMAGE:-interview-labs-gateway:local}"
+export VSCODE_IMAGE="${VSCODE_IMAGE:-interview-labs-vscode:${VSCODE_PROFILE:-devops}-local}"
 
 setup_file() {
-  if ! ${COMPOSE_CMD} up -d --build --wait >/dev/null; then
+  if ! ${COMPOSE_CMD} up -d --wait >/dev/null; then
     echo "compose up failed" >&2
     ${COMPOSE_CMD} logs >&2 || true
     return 1

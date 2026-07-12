@@ -87,13 +87,16 @@ func assertSessionMeta(t *testing.T, wantVM, wantUser, wantImage string) *sessio
 }
 
 // assertRemoteCommands checks the exact ssh exec sequence a cloud launch
-// runs, in order: cloud-init wait, push stack, build stack, compose up.
+// runs, in order: cloud-init wait, push stack, pull stack, compose up.
 func assertRemoteCommands(t *testing.T, rec *sshtest.ExecRecorder, slug string) {
 	t.Helper()
+	gw := "ghcr.io/openbuzz/interview-labs-gateway:edge"
+	vs := "ghcr.io/openbuzz/interview-labs-vscode:edge-devops"
 	want := []string{
 		"cloud-init status --wait",
-		"mkdir -p /opt/interview/docker && tar -xzf - -C /opt/interview/docker",
-		"cd /opt/interview/docker && docker buildx bake gateway devops",
+		"mkdir -p /opt/interview/docker && cat > /opt/interview/docker/compose.yaml",
+		"cd /opt/interview/docker && GATEWAY_IMAGE='" + gw +
+			"' VSCODE_IMAGE='" + vs + "' docker compose pull",
 		"cd /opt/interview/docker && set -a && . /dev/stdin && set +a && " +
 			"docker compose -p interview-" + slug + " up -d --wait",
 	}
@@ -469,7 +472,7 @@ func TestLaunchQuietRendersPhaseRows(t *testing.T) {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
 	for _, row := range []string{"stage", "terraform init", "terraform apply",
-		"wait-ssh", "cloud-init", "push stack", "build stack", "compose up"} {
+		"wait-ssh", "cloud-init", "push stack", "pull stack", "compose up"} {
 		if !strings.Contains(out, ui.GlyphOK+" "+row) {
 			t.Fatalf("missing quiet row %q:\n%s", row, out)
 		}

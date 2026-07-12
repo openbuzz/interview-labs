@@ -5,16 +5,7 @@ import (
 	"testing"
 )
 
-func TestCommands(t *testing.T) {
-	if got := ExtractCmd(); got !=
-		"mkdir -p /opt/interview/docker && tar -xzf - -C /opt/interview/docker" {
-		t.Errorf("ExtractCmd = %q", got)
-	}
-	if got := BakeCmd("devops-ai"); got !=
-		"cd /opt/interview/docker && docker buildx bake gateway devops-ai" {
-		t.Errorf("BakeCmd = %q", got)
-	}
-
+func TestComposeUpCmd(t *testing.T) {
 	up := ComposeUpCmd("brave-otter")
 	for _, want := range []string{
 		"cd /opt/interview/docker",
@@ -35,5 +26,21 @@ func TestEnvBlobSortedAndQuoted(t *testing.T) {
 	want := "A_KEY='it'\\''s quoted'\nB_KEY='plain'\n"
 	if got != want {
 		t.Errorf("EnvBlob = %q, want %q", got, want)
+	}
+}
+
+func TestPushCmd(t *testing.T) {
+	want := "mkdir -p /opt/interview/docker && " +
+		"cat > /opt/interview/docker/compose.yaml"
+	if got := PushCmd(); got != want {
+		t.Errorf("PushCmd = %q", got)
+	}
+}
+
+func TestPullCmd(t *testing.T) {
+	want := "cd /opt/interview/docker && " +
+		"GATEWAY_IMAGE='g:1' VSCODE_IMAGE='v:1' docker compose pull"
+	if got := PullCmd("g:1", "v:1"); got != want {
+		t.Errorf("PullCmd = %q", got)
 	}
 }

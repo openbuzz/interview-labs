@@ -2,7 +2,7 @@
 
 FROM ubuntu:26.04 AS base
 
-LABEL org.opencontainers.image.source="https://github.com/openbuzz/interview-labs-images"
+LABEL org.opencontainers.image.source="https://github.com/openbuzz/interview-labs"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 ARG TARGETARCH

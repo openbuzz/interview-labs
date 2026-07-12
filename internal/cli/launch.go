@@ -212,6 +212,7 @@ func ensureProfile(cfg *config.Config, flag string) (string, error) {
 // launchFlags bundles the launch command's flag values.
 type launchFlags struct {
 	region, size, profile string
+	image, gateway, tag   string
 	yes, noAI, noDNS      bool
 }
 
@@ -224,7 +225,7 @@ func newLaunchCmd() *cobra.Command {
 
 Steps: pick a configured provider, a stack profile, a region and an
 instance size (hourly price shown), then terraform applies the session,
-cloud-init installs docker while the VM boots, and the CLI builds and
+cloud-init installs docker while the VM boots, and the CLI pulls and
 starts the interview stack (gateway + vscode + dind) on it. The handover
 prints the session URL and gateway password. Selections are remembered
 and preselected next time. Pass --yes to skip the billing confirmation.
@@ -251,6 +252,12 @@ The VM bills hourly until "interview destroy".`,
 	cmd.Flags().BoolVar(&f.yes, "yes", false, "skip the billing confirmation prompt")
 	cmd.Flags().BoolVar(&f.noAI, "no-ai", false, "skip the per-session AI key mint")
 	cmd.Flags().BoolVar(&f.noDNS, "no-dns", false, "skip the per-session DNS record")
+	cmd.Flags().StringVar(&f.image, "image", "",
+		"vscode image ref override (full ref, used verbatim)")
+	cmd.Flags().StringVar(&f.gateway, "gateway", "",
+		"gateway image ref override (full ref, used verbatim)")
+	cmd.Flags().StringVar(&f.tag, "tag", "",
+		"image tag override; \"local\" uses task docker:build output")
 	return cmd
 }
 
@@ -275,7 +282,7 @@ func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 	}
 	vm, ok := sel.(provider.VM)
 	if !ok {
-		return runLocalLaunch(cmd, out, cfg, sel, profile, f.noAI)
+		return runLocalLaunch(cmd, out, cfg, sel, profile, f)
 	}
 	return runCloudLaunch(cmd, out, cfg, vm, profile, f)
 }
@@ -283,6 +290,11 @@ func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 // runCloudLaunch drives the terraform-backed pipeline.
 func runCloudLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 	vm provider.VM, profile string, f *launchFlags) error {
+	images, err := resolveAndValidateImages(out, f, profile)
+	if err != nil {
+		return err
+	}
+
 	bin, err := terraform.Find()
 	if err != nil {
 		return err
@@ -311,11 +323,26 @@ func runCloudLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 	}
 	defer release()
 
-	if err := runLaunch(cmd.Context(), out, buildLaunchInputs(cfg, vm, ai, access),
-		bin, s); err != nil {
+	if err := runLaunch(cmd.Context(), out,
+		buildLaunchInputs(cfg, vm, ai, access, images), bin, s); err != nil {
 		return failLaunch(out, s, err)
 	}
 	return nil
+}
+
+// resolveAndValidateImages resolves the session's image refs and fails
+// before any phase runs — refs land verbatim on the remote command line.
+// Split out of runCloudLaunch to stay under the complexity gate.
+func resolveAndValidateImages(out io.Writer, f *launchFlags,
+	profile string) (resolvedImages, error) {
+	images := resolveImages(f, profile)
+	if err := images.validate(); err != nil {
+		return resolvedImages{}, err
+	}
+	if images.Warning != "" {
+		fmt.Fprintln(out, ui.RowWarn("images", images.Warning))
+	}
+	return images, nil
 }
 
 // newLaunchSession creates the session and mints its gateway password —
@@ -447,12 +474,13 @@ type launchInputs struct {
 	creds  map[string]string
 	tfvars map[string]any
 	ai     provider.AI
+	images resolvedImages
 }
 
-// buildLaunchInputs assembles creds and tfvars from the active providers.
+// buildLaunchInputs assembles creds, tfvars and image refs from the actives.
 func buildLaunchInputs(cfg config.Config, vm provider.VM, ai provider.AI,
-	access provider.Access) launchInputs {
-	in := launchInputs{cfg: cfg, creds: vm.EnvCreds(cfg), ai: ai}
+	access provider.Access, images resolvedImages) launchInputs {
+	in := launchInputs{cfg: cfg, creds: vm.EnvCreds(cfg), ai: ai, images: images}
 	if access != nil {
 		in.creds = mergeCreds(in.creds, access.EnvCreds(cfg))
 		in.tfvars = access.TFVars(cfg)
@@ -591,7 +619,8 @@ func newSessionRunner(out io.Writer, creds map[string]string,
 }
 
 // stackPhases provisions the container stack on the VM: docker readiness,
-// payload push, optional key mint, image build, compose up.
+// compose push, image pull, optional key mint, compose up. Pull runs before
+// mint so a failed pull never leaves an orphaned AI key.
 func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
 	in launchInputs, s *session.Session) error {
 	if err := step(out, quiet, "cloud-init", func() error {
@@ -601,6 +630,11 @@ func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Cli
 	}
 	if err := step(out, quiet, "push stack", func() error {
 		return pushStack(ctx, client, s)
+	}); err != nil {
+		return err
+	}
+	if err := step(out, quiet, "pull stack", func() error {
+		return pullStack(ctx, out, quiet, client, in.images, s)
 	}); err != nil {
 		return err
 	}
@@ -615,14 +649,8 @@ func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Cli
 			return err
 		}
 	}
-
-	if err := step(out, quiet, "build stack", func() error {
-		return buildStack(ctx, out, quiet, client, s)
-	}); err != nil {
-		return err
-	}
 	return step(out, quiet, "compose up", func() error {
-		return upStack(ctx, client, s, aiKey)
+		return upStack(ctx, client, in.images, s, aiKey)
 	})
 }
 
@@ -643,31 +671,31 @@ func waitCloudInit(ctx context.Context, client *ssh.Client, s *session.Session) 
 	return logWrite(s, "cloud-init.log", out)
 }
 
-// pushStack tars the staged docker tree over ssh stdin into RemoteDir.
+// pushStack sends the staged compose file over ssh stdin into RemoteDir.
 func pushStack(ctx context.Context, client *ssh.Client, s *session.Session) error {
 	if err := s.SetPhase("push-stack"); err != nil {
 		return err
 	}
-	data, err := stack.TarGz(s.StackDir())
+	data, err := os.ReadFile(filepath.Join(s.StackDir(), "compose.yaml"))
 	if err != nil {
 		return err
 	}
 
-	out, err := client.RunIn(ctx, bytes.NewReader(data), stack.ExtractCmd())
+	out, err := client.RunIn(ctx, bytes.NewReader(data), stack.PushCmd())
 	if err != nil {
 		return fmt.Errorf("push stack: %w (output: %s)", err, strings.TrimSpace(out))
 	}
 	return nil
 }
 
-// buildStack runs the bake build on the VM — the slow phase; output streams
-// to the session log (and the terminal when verbose).
-func buildStack(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
-	s *session.Session) error {
-	if err := s.SetPhase("build-stack"); err != nil {
+// pullStack pulls the session images on the VM — the slow phase; output
+// streams to the session log (and the terminal when verbose).
+func pullStack(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
+	images resolvedImages, s *session.Session) error {
+	if err := s.SetPhase("pull-stack"); err != nil {
 		return err
 	}
-	logPath := filepath.Join(s.LogsDir(), "stack-build.log")
+	logPath := filepath.Join(s.LogsDir(), "stack-pull.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -678,22 +706,26 @@ func buildStack(ctx context.Context, out io.Writer, quiet bool, client *ssh.Clie
 	if !quiet {
 		dest = io.MultiWriter(out, logFile)
 	}
-	if err := client.RunStream(ctx, dest, stack.BakeCmd(s.Meta.Profile)); err != nil {
-		return fmt.Errorf("stack build failed (log: %s): %w", logPath, err)
+	cmd := stack.PullCmd(images.Gateway, images.Vscode)
+	if err := client.RunStream(ctx, dest, cmd); err != nil {
+		return fmt.Errorf("image pull failed (log: %s) — images for this build may "+
+			"not be published yet; publish first or use --tag local with the "+
+			"local provider: %w", logPath, err)
 	}
 	return nil
 }
 
 // upStack starts the stack; per-mode deltas cross as env sourced from stdin.
-func upStack(ctx context.Context, client *ssh.Client, s *session.Session,
-	aiKey string) error {
+func upStack(ctx context.Context, client *ssh.Client, images resolvedImages,
+	s *session.Session, aiKey string) error {
 	if err := s.SetPhase("compose-up"); err != nil {
 		return err
 	}
 	env := map[string]string{
 		"GATEWAY_BIND":     "0.0.0.0:80",
 		"GATEWAY_PASSWORD": s.Meta.GatewayPassword,
-		"VSCODE_PROFILE":   s.Meta.Profile,
+		"GATEWAY_IMAGE":    images.Gateway,
+		"VSCODE_IMAGE":     images.Vscode,
 	}
 	if aiKey != "" {
 		env["OPENROUTER_API_KEY"] = aiKey
@@ -740,9 +772,9 @@ func mintAIKey(ctx context.Context, ai provider.AI, cfg config.Config,
 	return key.Key, s.Save()
 }
 
-// stageSession materializes the embedded trees and tfvars into the session
-// dir: terraform sources, the docker payload, and the cloud-init document
-// the VM boots with.
+// stageSession materializes terraform sources, the compose file, and
+// tfvars into the session dir — including the cloud-init document the
+// VM boots with.
 func stageSession(s *session.Session, extra map[string]any) error {
 	if err := s.SetPhase("stage"); err != nil {
 		return err

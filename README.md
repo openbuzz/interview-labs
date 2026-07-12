@@ -7,8 +7,9 @@ DigitalOcean, Hetzner Cloud, or AWS, or containers on your own machine via the `
 provider. Each session runs the interview stack: a password-gated web gateway, a
 browser VS Code workspace (four profiles: `backend`, `devops`, `backend-ai`,
 `devops-ai`), and an isolated docker daemon for the candidate. Cloud VMs install
-docker via cloud-init and build the stack from source at launch; the handover prints
-the session URL and gateway password.
+docker via cloud-init and pull the stack images
+(`ghcr.io/openbuzz/interview-labs-{gateway,vscode}`) at launch; the handover prints the
+session URL and gateway password.
 When configured, `-ai` sessions also get a spend-capped OpenRouter API key (minted at
 launch, revoked at destroy) and every cloud session a proxied Cloudflare DNS record
 (`<slug>.<your-domain>`).
@@ -34,7 +35,7 @@ go install github.com/openbuzz/interview-labs/cmd/interview@latest
 ```sh
 interview doctor    # check tools, dirs, credentials
 interview init      # configure cloud providers
-interview launch    # pick provider, profile, region and size; builds and starts the stack
+interview launch    # pick provider, profile, region and size; pulls and starts the stack
 interview list      # sessions with age and status
 interview info      # one session's details: IP, OS, ssh line
 interview ssh       # shell into a session VM
@@ -52,6 +53,11 @@ the environment at start — the key value is never written to disk on either si
 Local sessions bind `http://localhost:8080` with the fixed password `openbuzz`; cloud
 sessions serve `http://<ip>` (port 80) — or `http://<slug>.<domain>` with Cloudflare —
 with a random per-session password (shown in the handover and `interview info`).
+
+Images are pulled prebuilt from the registry; `--image` / `--gateway` override the
+vscode / gateway ref outright (full ref, used verbatim), and `--tag` swaps in a local,
+unqualified tag instead. Dev loop: `task docker:build` builds local images, then
+`interview launch` (pick `local`) `--tag local` runs them without touching the registry.
 
 Non-interactive use: set a provider env var (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, or
 `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`; `OPENROUTER_MANAGEMENT_KEY` and

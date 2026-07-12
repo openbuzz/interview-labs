@@ -38,10 +38,10 @@ func liveLocalSession() (*session.Session, error) {
 	return nil, nil
 }
 
-// runLocalLaunch drives the docker-on-this-machine pipeline: stage, build,
-// mint, compose up. No terraform, no billing gate, no ssh.
+// runLocalLaunch drives the docker-on-this-machine pipeline: stage, mint,
+// compose up. No terraform, no billing gate, no ssh.
 func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
-	sel provider.Provider, profile string, noAI bool) error {
+	sel provider.Provider, profile string, f *launchFlags) error {
 	existing, err := liveLocalSession()
 	if err != nil {
 		return err
@@ -51,7 +51,7 @@ func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 			"time (interview destroy %s)", existing.Meta.Slug, existing.Meta.Slug)
 	}
 
-	ai := activeAI(cfg, noAI || !isAIProfile(profile))
+	ai := activeAI(cfg, f.noAI || !isAIProfile(profile))
 	roles := map[string]string{"vm": sel.Name()}
 	if ai != nil {
 		roles["ai"] = ai.Name()
@@ -70,7 +70,11 @@ func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 	}
 	defer release()
 
-	if err := runLocalStack(cmd.Context(), out, cfg, ai, s); err != nil {
+	images, err := resolveAndValidateImages(out, f, profile)
+	if err != nil {
+		return failLaunch(out, s, err)
+	}
+	if err := runLocalStack(cmd.Context(), out, cfg, ai, images, s); err != nil {
 		return failLaunch(out, s, err)
 	}
 	return nil
@@ -78,22 +82,13 @@ func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 
 // runLocalStack runs the local phases; step rows mirror the cloud pipeline.
 func runLocalStack(ctx context.Context, out io.Writer, cfg config.Config,
-	ai provider.AI, s *session.Session) error {
+	ai provider.AI, images resolvedImages, s *session.Session) error {
 	quiet := quietOutput()
 	if err := step(out, quiet, "stage", func() error {
 		if err := s.SetPhase("stage"); err != nil {
 			return err
 		}
 		return stack.Stage(s.StackDir())
-	}); err != nil {
-		return err
-	}
-	if err := step(out, quiet, "build stack", func() error {
-		if err := s.SetPhase("build-stack"); err != nil {
-			return err
-		}
-		return execDocker(ctx, out, quiet, s, "stack-build.log", s.StackDir(), nil,
-			"buildx", "bake", "gateway", s.Meta.Profile)
 	}); err != nil {
 		return err
 	}
@@ -110,7 +105,7 @@ func runLocalStack(ctx context.Context, out io.Writer, cfg config.Config,
 	}
 
 	if err := step(out, quiet, "compose up", func() error {
-		return localComposeUp(ctx, out, quiet, s, aiKey)
+		return localComposeUp(ctx, out, quiet, images, s, aiKey)
 	}); err != nil {
 		return err
 	}
@@ -119,14 +114,17 @@ func runLocalStack(ctx context.Context, out io.Writer, cfg config.Config,
 
 // localComposeUp starts the stack on the host engine; env vars carry the
 // per-mode deltas (no GATEWAY_BIND — the compose default is loopback).
+// compose up's default "missing" pull policy fetches absent images and uses
+// present ones as-is — exactly what --tag local needs.
 func localComposeUp(ctx context.Context, out io.Writer, quiet bool,
-	s *session.Session, aiKey string) error {
+	images resolvedImages, s *session.Session, aiKey string) error {
 	if err := s.SetPhase("compose-up"); err != nil {
 		return err
 	}
 	env := []string{
 		"GATEWAY_PASSWORD=" + localPassword,
-		"VSCODE_PROFILE=" + s.Meta.Profile,
+		"GATEWAY_IMAGE=" + images.Gateway,
+		"VSCODE_IMAGE=" + images.Vscode,
 	}
 	if aiKey != "" {
 		env = append(env, "OPENROUTER_API_KEY="+aiKey)

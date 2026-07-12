@@ -86,22 +86,21 @@ func assertLocalSessionMeta(t *testing.T, s *session.Session) {
 }
 
 // assertLocalDockerCalls checks the exact docker argv sequence a local
-// launch runs: build the stack, then compose up.
+// launch runs: compose up only — the binary never builds images.
 func assertLocalDockerCalls(t *testing.T, dir, slug string) {
 	t.Helper()
 	calls, err := os.ReadFile(filepath.Join(dir, "calls.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "buildx bake gateway devops\n" +
-		"compose -p interview-" + slug + " up -d --wait\n"
+	want := "compose -p interview-" + slug + " up -d --wait\n"
 	if string(calls) != want {
 		t.Fatalf("docker calls:\n%s\nwant:\n%s", calls, want)
 	}
 }
 
 // assertLocalComposeEnv checks the compose env carries the gateway
-// password and profile, and omits GATEWAY_BIND (loopback default).
+// password and image refs, and omits GATEWAY_BIND (loopback default).
 func assertLocalComposeEnv(t *testing.T, dir string) {
 	t.Helper()
 	env, err := os.ReadFile(filepath.Join(dir, "env.txt"))
@@ -109,7 +108,8 @@ func assertLocalComposeEnv(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	for _, wantEnv := range []string{"GATEWAY_PASSWORD=openbuzz",
-		"VSCODE_PROFILE=devops"} {
+		"GATEWAY_IMAGE=ghcr.io/openbuzz/interview-labs-gateway:edge",
+		"VSCODE_IMAGE=ghcr.io/openbuzz/interview-labs-vscode:edge-devops"} {
 		if !strings.Contains(string(env), wantEnv) {
 			t.Fatalf("compose env missing %s", wantEnv)
 		}

@@ -1,3 +1,3 @@
-module github.com/openbuzz/interview-labs-images/images/gateway
+module github.com/openbuzz/interview-labs/docker/images/gateway
 
 go 1.26

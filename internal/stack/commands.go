@@ -10,21 +10,26 @@ import (
 // in RemoteDir/docker.
 const RemoteDir = "/opt/interview"
 
-// ExtractCmd unpacks the payload tar arriving on stdin.
-func ExtractCmd() string {
-	return "mkdir -p " + RemoteDir + "/docker && tar -xzf - -C " + RemoteDir + "/docker"
-}
-
-// BakeCmd builds the gateway and the selected vscode profile in one bake run.
-func BakeCmd(profile string) string {
-	return "cd " + RemoteDir + "/docker && docker buildx bake gateway " + profile
-}
-
 // ComposeUpCmd starts the stack. Env arrives by sourcing stdin (EnvBlob),
 // never argv — secrets stay out of /proc cmdlines.
 func ComposeUpCmd(slug string) string {
 	return "cd " + RemoteDir + "/docker && set -a && . /dev/stdin && set +a && " +
 		"docker compose -p interview-" + slug + " up -d --wait"
+}
+
+// PushCmd receives the compose file arriving on stdin.
+func PushCmd() string {
+	return "mkdir -p " + RemoteDir + "/docker && cat > " + RemoteDir +
+		"/docker/compose.yaml"
+}
+
+// PullCmd pulls the session's two images. Refs cross as inline env (public
+// registry names charset-validated at resolve time, not secrets) because
+// compose interpolates GATEWAY_IMAGE/VSCODE_IMAGE at parse time — pull and
+// up must see the same values.
+func PullCmd(gatewayRef, vscodeRef string) string {
+	return "cd " + RemoteDir + "/docker && GATEWAY_IMAGE='" + gatewayRef +
+		"' VSCODE_IMAGE='" + vscodeRef + "' docker compose pull"
 }
 
 // EnvBlob renders KEY='value' lines sorted by key, single quotes escaped,
