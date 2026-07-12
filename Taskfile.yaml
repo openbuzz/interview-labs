@@ -188,9 +188,13 @@ tasks:
       set -e -u -o pipefail
       trap 'echo "=> ✗ docker build failed"' ERR
 
+      secret_args=()
+      [[ -n "${GITHUB_TOKEN:-}" ]] &&
+        secret_args=(--set "*.secrets=id=github_token,env=GITHUB_TOKEN")
+
       echo "=> Building stack images via bake"
       (cd docker && TAG=local docker buildx bake -f docker-bake.hcl local gateway \
-        --set '*.output=type=docker')
+        --set '*.output=type=docker' "${secret_args[@]+"${secret_args[@]}"}")
       echo "=> ✓ stack images built"
 
   docker:test:

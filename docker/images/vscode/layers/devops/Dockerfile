@@ -6,7 +6,7 @@ USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY mise.toml /etc/mise/config.toml
-RUN mise install
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN mise install
 
 COPY setup.sh /tmp/profile.sh
 COPY settings.json /tmp/profile.settings.json

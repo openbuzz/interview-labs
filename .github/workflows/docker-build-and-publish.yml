@@ -119,6 +119,8 @@ jobs:
           trivy config --exit-code 1 --ignorefile .trivyignore.yaml docker
 
       - name: Build images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: task docker:build
 
       - name: Docker tests
@@ -137,6 +139,8 @@ jobs:
       - uses: jdx/mise-action@v4
 
       - name: Build images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: task docker:build
 
       - name: End-to-end stack test
@@ -198,6 +202,8 @@ jobs:
 
       - if: matrix.target.image == 'vscode'
         working-directory: docker
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e -u -o pipefail
           tgt="${{ matrix.target.profile }}"
@@ -208,6 +214,7 @@ jobs:
             --set "${tgt}.output=${out}" \
             --set "*.cache-from=type=gha,scope=${SCOPE}" \
             --set "*.cache-to=type=gha,mode=max,scope=${SCOPE}" \
+            --set "*.secrets=id=github_token,env=GITHUB_TOKEN" \
             --metadata-file /tmp/bake-meta.json
           digest="$(jq -r --arg t "${tgt}" '.[$t]."containerimage.digest"' /tmp/bake-meta.json)"
           echo "DIGEST=${digest}" >> "${GITHUB_ENV}"

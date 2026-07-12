@@ -13,7 +13,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY mise.toml /etc/mise/config.toml
-RUN mise install && \
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN mise install && \
     rm -rf /home/user/go /home/user/.cache/go-build && \
     chown -R user:user /home/user
 
