@@ -212,6 +212,7 @@ jobs:
           TAG=ci docker buildx bake -f docker-bake.hcl "${tgt}" \
             --set "*.platform=${plat}" \
             --set "${tgt}.output=${out}" \
+            --set "${tgt}.tags=" \
             --set "*.cache-from=type=gha,scope=${SCOPE}" \
             --set "*.cache-to=type=gha,mode=max,scope=${SCOPE}" \
             --set "*.secrets=id=github_token,env=GITHUB_TOKEN" \
