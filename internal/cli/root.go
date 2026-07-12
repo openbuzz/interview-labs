@@ -21,6 +21,7 @@ import (
 	"github.com/openbuzz/interview-labs/internal/openrouter"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/ui"
+	"github.com/openbuzz/interview-labs/internal/version"
 )
 
 // providers is the registry, in menu order.
@@ -113,8 +114,9 @@ func init() {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "interview",
-		Short: "disposable interview lab VMs",
+		Use:     "interview",
+		Short:   "disposable interview lab VMs",
+		Version: func() string { info, _ := version.ResolvePins(); return info.Version }(),
 		Long: `interview runs one disposable cloud VM per interview session.
 
 Commands:

@@ -15,6 +15,23 @@ launch, revoked at destroy) and every cloud session a proxied Cloudflare DNS rec
 (`<slug>.<your-domain>`).
 Sessions run in parallel; state lives under your XDG directories and survives restarts.
 
+## Install
+
+```sh
+brew install openbuzz/tap/interview
+```
+
+Homebrew casks are macOS-only; released binaries pin the exact container image
+digests they were tested with. On Linux, or anywhere without Homebrew:
+
+```sh
+go install github.com/openbuzz/interview-labs/cmd/interview@latest
+```
+
+Building from source — `go install` above, or `task build` in a checkout — skips
+digest pinning: those builds resolve images by tag instead and say so
+at launch.
+
 ## Requirements
 
 - terraform or opentofu on PATH (terraform preferred when both exist)
@@ -23,12 +40,6 @@ Sessions run in parallel; state lives under your XDG directories and survives re
 - optional: an ssh client for `interview ssh`
 - optional: an OpenRouter management key (mints per-session API keys) and a Cloudflare
   API token + zone for per-session DNS
-
-## Install
-
-```sh
-go install github.com/openbuzz/interview-labs/cmd/interview@latest
-```
 
 ## Use
 

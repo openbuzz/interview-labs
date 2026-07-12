@@ -296,3 +296,51 @@ jobs:
           img="${{ env.IMG }}"
           tag="${{ steps.meta.outputs.version }}"
           docker buildx imagetools inspect "${img}:${tag}"
+
+  # ---
+  # Tag releases: collect image digests, build pinned binaries, publish.
+  # ---
+
+  release:
+    needs: [changes, merge]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect image digests
+        run: |
+          set -e -u -o pipefail
+
+          ver="${GITHUB_REF_NAME#v}"
+          fmt='{{ json .Manifest.Digest }}'
+          gw="$(docker buildx imagetools inspect \
+            "ghcr.io/openbuzz/interview-labs-gateway:${ver}" --format "${fmt}" | jq -r .)"
+          echo "GATEWAY_DIGEST=${gw}" >> "${GITHUB_ENV}"
+
+          pins=""
+          for profile in backend devops backend-ai devops-ai; do
+            d="$(docker buildx imagetools inspect \
+              "ghcr.io/openbuzz/interview-labs-vscode:${ver}-${profile}" \
+              --format "${fmt}" | jq -r .)"
+            pins="${pins:+${pins},}${profile}=${d}"
+          done
+          echo "VSCODE_DIGESTS=${pins}" >> "${GITHUB_ENV}"
+
+      - name: Run goreleaser
+        run: mise exec -- goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

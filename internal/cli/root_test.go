@@ -118,6 +118,17 @@ func TestBareRootTTYSubcommandErrorKeepsLooping(t *testing.T) {
 	}
 }
 
+func TestRootVersionFlag(t *testing.T) {
+	out, code := runCmd(t, "--version")
+
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "edge") {
+		t.Fatalf("dev build version output = %q, want to contain \"edge\"", out)
+	}
+}
+
 func TestMenuDispatchesLogoOnce(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	swapTTY(t, true)

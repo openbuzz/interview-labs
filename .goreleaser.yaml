@@ -1,0 +1,41 @@
+version: 2
+
+project_name: interview
+
+builds:
+  - main: ./cmd/interview
+    binary: interview
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: linux
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/openbuzz/interview-labs/internal/version.buildVersion={{.Version}}
+      - -X github.com/openbuzz/interview-labs/internal/version.commit={{.ShortCommit}}
+      - -X github.com/openbuzz/interview-labs/internal/version.gatewayDigest={{.Env.GATEWAY_DIGEST}}
+      - -X github.com/openbuzz/interview-labs/internal/version.vscodeDigests={{.Env.VSCODE_DIGESTS}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+
+homebrew_casks:
+  - name: interview
+    repository:
+      owner: openbuzz
+      name: homebrew-tap
+      token: '{{ .Env.TAP_GITHUB_TOKEN }}'
+    directory: Casks
+    homepage: https://github.com/openbuzz/interview-labs
+    description: Disposable cloud interview labs — one VM per session
+    license: Apache-2.0
