@@ -1,0 +1,298 @@
+name: Docker Build & Publish
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Build and push images to GitHub Container Registry
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---
+  # Pick which images to build, and whether this run publishes.
+  # ---
+
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      gateway: ${{ steps.set.outputs.gateway }}
+      vscode: ${{ steps.set.outputs.vscode }}
+      targets: ${{ steps.set.outputs.targets }}
+      publish: ${{ steps.set.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            gateway:
+              - 'docker/images/gateway/**'
+              - 'docker/compose.yaml'
+              - 'docker/docker-bake.hcl'
+              - 'tests/e2e.bats'
+              - 'Taskfile.yaml'
+              - '.github/workflows/docker-build-and-publish.yml'
+            vscode:
+              - 'docker/images/vscode/**'
+              - 'docker/compose.yaml'
+              - 'docker/docker-bake.hcl'
+              - 'tests/e2e.bats'
+              - 'Taskfile.yaml'
+              - '.github/workflows/docker-build-and-publish.yml'
+
+      - id: set
+        run: |
+          set -e -u -o pipefail
+
+          ref_type="${{ github.ref_type }}"
+          event="${{ github.event_name }}"
+          gw="${{ steps.filter.outputs.gateway }}"
+          vs="${{ steps.filter.outputs.vscode }}"
+
+          # Tags and manual publish always build both, regardless of the diff.
+          if [[ "${ref_type}" == "tag" || "${event}" == "workflow_dispatch" ]]; then
+            gw=true
+            vs=true
+          fi
+
+          # Publish on any push (main or tag) or a manual run with publish=true.
+          pub=false
+          [[ "${event}" == "push" ]] && pub=true
+          if [[ "${event}" == "workflow_dispatch" && "${{ inputs.publish }}" == "true" ]]; then
+            pub=true
+          fi
+
+          tjson="$(
+            {
+              [[ "${gw}" == "true" ]] && \
+                printf '{"image":"gateway","profile":"","suffix":"","latest":"auto"}\n'
+              if [[ "${vs}" == "true" ]]; then
+                # Published vscode targets come from bake (base is parent-only).
+                ( cd docker && TAG=ci docker buildx bake -f docker-bake.hcl local --print ) \
+                  | jq -c '.target | keys[] | select(. != "base") |
+                    {image:"vscode", profile:., suffix:("-"+.), latest:"false"}'
+              fi
+            } | jq -sc .
+          )"
+
+          {
+            echo "gateway=${gw}"
+            echo "vscode=${vs}"
+            echo "targets=${tjson}"
+            echo "publish=${pub}"
+          } >> "${GITHUB_OUTPUT}"
+
+  # ---
+  # Lint, build, test and scan the docker tree (the PR gate).
+  # ---
+
+  check:
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true' || needs.changes.outputs.vscode == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+
+      - name: Docker lint
+        run: task docker:lint
+
+      - name: Docker scan
+        run: |
+          trivy config --exit-code 1 --ignorefile .trivyignore.yaml docker
+
+      - name: Build images
+        run: task docker:build
+
+      - name: Docker tests
+        run: task docker:test
+
+  # ---
+  # End-to-end test of the whole stack; gates every publish (edge and release).
+  # ---
+
+  e2e:
+    needs: [changes, check]
+    if: needs.changes.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+
+      - name: Build images
+        run: task docker:build
+
+      - name: End-to-end stack test
+        run: task docker:e2e
+
+  # ---
+  # Build each arch on its native runner, then push by digest.
+  # ---
+
+  publish:
+    needs: [changes, check, e2e]
+    if: needs.changes.outputs.publish == 'true'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.changes.outputs.targets) }}
+        arch:
+          - { platform: linux/amd64, runner: ubuntu-24.04 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.arch.runner }}
+    env:
+      IMG: ghcr.io/openbuzz/interview-labs-${{ matrix.target.image }}
+      SCOPE: ${{ matrix.target.image }}-${{ matrix.target.profile }}-${{ matrix.arch.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMG }}
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build_gw
+        if: matrix.target.image == 'gateway'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./docker/images/gateway
+          platforms: ${{ matrix.arch.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ env.SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.SCOPE }}
+          outputs: type=image,name=${{ env.IMG }},push-by-digest=true,name-canonical=true,push=true
+      - if: matrix.target.image == 'gateway'
+        run: echo "DIGEST=${{ steps.build_gw.outputs.digest }}" >> "${GITHUB_ENV}"
+
+      # Export ACTIONS_CACHE_URL + ACTIONS_RUNTIME_TOKEN so the raw `docker buildx bake`
+      # step below can reach the type=gha cache (build-push-action injects these itself).
+      - if: matrix.target.image == 'vscode'
+        uses: crazy-max/ghaction-github-runtime@v3
+
+      - if: matrix.target.image == 'vscode'
+        working-directory: docker
+        run: |
+          set -e -u -o pipefail
+          tgt="${{ matrix.target.profile }}"
+          plat="${{ matrix.arch.platform }}"
+          out="type=image,name=${IMG},push-by-digest=true,name-canonical=true,push=true"
+          TAG=ci docker buildx bake -f docker-bake.hcl "${tgt}" \
+            --set "*.platform=${plat}" \
+            --set "${tgt}.output=${out}" \
+            --set "*.cache-from=type=gha,scope=${SCOPE}" \
+            --set "*.cache-to=type=gha,mode=max,scope=${SCOPE}" \
+            --metadata-file /tmp/bake-meta.json
+          digest="$(jq -r --arg t "${tgt}" '.[$t]."containerimage.digest"' /tmp/bake-meta.json)"
+          echo "DIGEST=${digest}" >> "${GITHUB_ENV}"
+
+      - name: Export digest
+        run: |
+          set -e -u -o pipefail
+          img="${{ matrix.target.image }}"
+          prof="${{ matrix.target.profile }}"
+          idx="${{ strategy.job-index }}"
+          dir="/tmp/digests/${img}/${prof}"
+          mkdir -p "${dir}"
+          digest="${DIGEST}"
+          touch "${dir}/${digest#sha256:}"
+          echo "ARTIFACT=digests-${img}-${prof}.${idx}" >> "${GITHUB_ENV}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: /tmp/digests/${{ matrix.target.image }}/${{ matrix.target.profile }}/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---
+  # Stitch the per-arch digests into one multi-arch tag set.
+  # ---
+
+  merge:
+    needs: [changes, publish]
+    if: needs.changes.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.changes.outputs.targets) }}
+    env:
+      IMG: ghcr.io/openbuzz/interview-labs-${{ matrix.target.image }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.target.image }}-${{ matrix.target.profile }}.*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMG }}
+          flavor: |
+            latest=${{ matrix.target.latest }}
+            suffix=${{ matrix.target.suffix }}
+          tags: |
+            type=edge,branch=main
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          set -e -u -o pipefail
+          extra=()
+          if [[ -n "${{ matrix.target.profile }}" && "${{ github.ref_type }}" == "tag" ]]; then
+            extra+=("-t" "${{ env.IMG }}:${{ matrix.target.profile }}")
+          fi
+          # shellcheck disable=SC2046  # intentional word-splitting of tag flags + digests
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "${DOCKER_METADATA_OUTPUT_JSON}") \
+            "${extra[@]}" \
+            $(printf '${{ env.IMG }}@sha256:%s ' *)
+
+      - name: Inspect
+        run: |
+          set -e -u -o pipefail
+          img="${{ env.IMG }}"
+          tag="${{ steps.meta.outputs.version }}"
+          docker buildx imagetools inspect "${img}:${tag}"
