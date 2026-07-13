@@ -5,5 +5,6 @@
 
 set -e -u -o pipefail
 
-touch "${INTERVIEW_LAB_DIR}/setup-ran"
+# The lab dir mounts read-only; markers and artifacts go to the home dir.
+touch "${HOME}/setup-ran"
 cat "${INTERVIEW_LAB_DIR}/motd.txt"
