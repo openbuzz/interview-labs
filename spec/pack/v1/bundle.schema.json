@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/bundle.schema.json",
+  "type": "object",
+  "required": ["description", "image"],
+  "additionalProperties": false,
+  "properties": {
+    "description": {"type": "string", "minLength": 1},
+    "image": {"enum": ["backend", "devops"]}
+  }
+}

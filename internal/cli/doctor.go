@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -39,6 +41,7 @@ client, XDG config/state/cache directories, and stored credentials.`,
 
 			ok := checkTerraform(p)
 			checkSSHClient(p)
+			checkKindTools(p)
 			ok = checkStateDirs(p) && ok
 			ok = checkCredentials(cmd.Context(), p) && ok
 
@@ -72,6 +75,51 @@ func checkSSHClient(p func(string)) {
 		return
 	}
 	p(ui.RowOK("ssh client", "found"))
+}
+
+// kindToolVersion is a seam for tests; production runs the binary.
+var kindToolVersion = func(bin string) (string, error) {
+	args := []string{"version"}
+	if bin == "kubectl" {
+		args = []string{"version", "--client"}
+	}
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	return string(out), err
+}
+
+// kindToolFloors are the minimum families matching the pinned VM toolchain.
+var kindToolFloors = map[string][2]int{
+	"kind":    {0, 32},
+	"kubectl": {1, 35},
+}
+
+var toolVersionPattern = regexp.MustCompile(`v(\d+)\.(\d+)\.\d+`)
+
+// checkKindTools reports the kind/kubectl rows — warns, never failures:
+// only local kubernetes bundles need them, and launch gates on presence.
+func checkKindTools(p func(string)) {
+	for _, bin := range []string{"kind", "kubectl"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			p(ui.RowWarn(bin, "not found — needed for local kubernetes bundles"))
+			continue
+		}
+
+		out, err := kindToolVersion(bin)
+		m := toolVersionPattern.FindStringSubmatch(out)
+		if err != nil || m == nil {
+			p(ui.RowWarn(bin, "version unreadable"))
+			continue
+		}
+		major, _ := strconv.Atoi(m[1])
+		minor, _ := strconv.Atoi(m[2])
+		floor := kindToolFloors[bin]
+		if major < floor[0] || (major == floor[0] && minor < floor[1]) {
+			p(ui.RowWarn(bin, fmt.Sprintf("%s found — below v%d.%d, "+
+				"kubernetes bundles may misbehave", m[0], floor[0], floor[1])))
+			continue
+		}
+		p(ui.RowOK(bin, m[0]))
+	}
 }
 
 // checkStateDirs reports whether the XDG dirs are creatable.

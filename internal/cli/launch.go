@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"net"
 	"os"
@@ -20,6 +21,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
+	"github.com/openbuzz/interview-labs/internal/kindx"
+	"github.com/openbuzz/interview-labs/internal/pack"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	"github.com/openbuzz/interview-labs/internal/ssh"
@@ -209,10 +212,66 @@ func ensureProfile(cfg *config.Config, flag string) (string, error) {
 	return p, nil
 }
 
+// pickBundle is a seam; production shows the bundle menu, bare first.
+var pickBundle = func(p *pack.Pack) (string, error) {
+	opts := []huh.Option[string]{
+		huh.NewOption("bare session — no pack content", ""),
+	}
+	for _, b := range p.Bundles {
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%-10s— %s (%d scenarios)",
+			b.Name, b.Description, len(b.Scenarios)), b.Name))
+	}
+	sel := ""
+	err := ui.SelectForm("Select an interview bundle",
+		"A bundle is one position's scenario set. Bare session skips pack content.",
+		opts, &sel)
+	return sel, err
+}
+
+// ensureBundle resolves the pack and the session's bundle: flag on any
+// terminal, picker on a TTY, bare otherwise. A nil bundle means bare.
+func ensureBundle(f *launchFlags) (*pack.Pack, *pack.Bundle, error) {
+	if f.bundle != "" && f.profile != "" {
+		return nil, nil, usageError("--bundle and --profile are mutually exclusive " +
+			"(the bundle's image field picks the profile)")
+	}
+
+	p, err := pack.Resolve(f.packRef)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := f.bundle
+	if name == "" && isTTY() {
+		if name, err = pickBundle(p); err != nil {
+			return nil, nil, err
+		}
+	}
+	if name == "" {
+		return p, nil, nil
+	}
+
+	b, ok := pack.BundleByName(p, name)
+	if !ok {
+		return nil, nil, usageError(fmt.Sprintf("bundle %q not in pack %q",
+			name, p.Name))
+	}
+	return p, b, nil
+}
+
+// bundleProfile derives the stack profile from the bundle's image plus the
+// session's AI activation — mirroring ensureProfile's -ai semantics.
+func bundleProfile(b *pack.Bundle, cfg config.Config, noAI bool) string {
+	if activeAI(cfg, noAI) != nil {
+		return b.Image + "-ai"
+	}
+	return b.Image
+}
+
 // launchFlags bundles the launch command's flag values.
 type launchFlags struct {
 	region, size, profile string
 	image, gateway, tag   string
+	packRef, bundle       string
 	yes, noAI, noDNS      bool
 }
 
@@ -230,6 +289,12 @@ starts the interview stack (gateway + vscode + dind) on it. The handover
 prints the session URL and gateway password. Selections are remembered
 and preselected next time. Pass --yes to skip the billing confirmation.
 Sessions are independent and run in parallel.
+
+Passing --bundle stages one position's interview content from a pack
+(--pack: default, template, or a directory): the scenarios land in the
+candidate's workspace, the bundle's image field picks the stack profile,
+and a kubernetes bundle gets a kind cluster on the session VM (local
+sessions create it on this machine's docker — kind and kubectl required).
 
 Picking "local" runs the same stack on this machine's docker engine —
 no cloud account, no billing, one local session at a time.
@@ -258,6 +323,10 @@ The VM bills hourly until "interview destroy".`,
 		"gateway image ref override (full ref, used verbatim)")
 	cmd.Flags().StringVar(&f.tag, "tag", "",
 		"image tag override; \"local\" uses task docker:build output")
+	cmd.Flags().StringVar(&f.packRef, "pack", "",
+		"content pack: default, template, or a local directory")
+	cmd.Flags().StringVar(&f.bundle, "bundle", "",
+		"interview bundle (position) from the pack; empty = bare session")
 	return cmd
 }
 
@@ -272,24 +341,32 @@ func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 	printLogoOnce(out)
 	printNarrowWarning(out)
 
+	p, bundle, err := ensureBundle(f)
+	if err != nil {
+		return err
+	}
 	sel, err := selectVMProvider(out, &cfg)
 	if err != nil {
 		return err
 	}
-	profile, err := ensureProfile(&cfg, f.profile)
-	if err != nil {
+
+	profile := ""
+	if bundle != nil {
+		profile = bundleProfile(bundle, cfg, f.noAI)
+	} else if profile, err = ensureProfile(&cfg, f.profile); err != nil {
 		return err
 	}
+
 	vm, ok := sel.(provider.VM)
 	if !ok {
-		return runLocalLaunch(cmd, out, cfg, sel, profile, f)
+		return runLocalLaunch(cmd, out, cfg, sel, profile, f, p, bundle)
 	}
-	return runCloudLaunch(cmd, out, cfg, vm, profile, f)
+	return runCloudLaunch(cmd, out, cfg, vm, profile, f, p, bundle)
 }
 
 // runCloudLaunch drives the terraform-backed pipeline.
 func runCloudLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
-	vm provider.VM, profile string, f *launchFlags) error {
+	vm provider.VM, profile string, f *launchFlags, p *pack.Pack, bundle *pack.Bundle) error {
 	images, err := resolveAndValidateImages(out, f, profile)
 	if err != nil {
 		return err
@@ -313,7 +390,7 @@ func runCloudLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 	access := activeAccess(cfg, f.noDNS)
 	s, err := newLaunchSession(f.region, f.size, vm.Image(), vm.SSHUser(), profile,
 		sessionRoles(vm, ai, access),
-		session.TerraformInfo{Binary: bin.Name, Version: bin.Version})
+		session.TerraformInfo{Binary: bin.Name, Version: bin.Version}, p, bundle)
 	if err != nil {
 		return err
 	}
@@ -324,7 +401,8 @@ func runCloudLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 	defer release()
 
 	if err := runLaunch(cmd.Context(), out,
-		buildLaunchInputs(cfg, vm, ai, access, images), bin, s); err != nil {
+		buildLaunchInputs(cfg, vm, ai, access, images, packOrNilFS(p), bundle),
+		bin, s); err != nil {
 		return failLaunch(out, s, err)
 	}
 	return nil
@@ -345,10 +423,12 @@ func resolveAndValidateImages(out io.Writer, f *launchFlags,
 	return images, nil
 }
 
-// newLaunchSession creates the session and mints its gateway password —
-// split out of runCloudLaunch to stay under the complexity gate.
+// newLaunchSession creates the session and mints its gateway password,
+// recording the picked bundle (if any) — split out of runCloudLaunch to
+// stay under the complexity gate.
 func newLaunchSession(region, size, image, sshUser, profile string,
-	roles map[string]string, tf session.TerraformInfo) (*session.Session, error) {
+	roles map[string]string, tf session.TerraformInfo,
+	p *pack.Pack, bundle *pack.Bundle) (*session.Session, error) {
 	s, err := session.New(region, size, image, sshUser, roles, tf)
 	if err != nil {
 		return nil, err
@@ -358,6 +438,9 @@ func newLaunchSession(region, size, image, sshUser, profile string,
 		return nil, err
 	}
 	s.Meta.Profile, s.Meta.GatewayPassword = profile, pw
+	if bundle != nil {
+		s.Meta.Pack, s.Meta.Bundle, s.Meta.Kind = p.Name, bundle.Name, bundle.HasKind
+	}
 	return s, s.Save()
 }
 
@@ -476,17 +559,29 @@ type launchInputs struct {
 	tfvars map[string]any
 	ai     provider.AI
 	images resolvedImages
+	packFS fs.FS
+	bundle *pack.Bundle
 }
 
 // buildLaunchInputs assembles creds, tfvars and image refs from the actives.
 func buildLaunchInputs(cfg config.Config, vm provider.VM, ai provider.AI,
-	access provider.Access, images resolvedImages) launchInputs {
-	in := launchInputs{cfg: cfg, creds: vm.EnvCreds(cfg), ai: ai, images: images}
+	access provider.Access, images resolvedImages, packFS fs.FS,
+	bundle *pack.Bundle) launchInputs {
+	in := launchInputs{cfg: cfg, creds: vm.EnvCreds(cfg), ai: ai, images: images,
+		packFS: packFS, bundle: bundle}
 	if access != nil {
 		in.creds = mergeCreds(in.creds, access.EnvCreds(cfg))
 		in.tfvars = access.TFVars(cfg)
 	}
 	return in
+}
+
+// packOrNilFS unwraps the pack FS for staging; bare launches carry nil.
+func packOrNilFS(p *pack.Pack) fs.FS {
+	if p == nil {
+		return nil
+	}
+	return p.FS
 }
 
 // ensureRegionSize fills missing region/size from the interactive loop and
@@ -584,7 +679,7 @@ func runLaunch(ctx context.Context, out io.Writer, in launchInputs,
 func applyPhases(ctx context.Context, out io.Writer, quiet bool, runner *terraform.Runner,
 	in launchInputs, s *session.Session) (ip string, err error) {
 	if err := step(out, quiet, "stage", func() error {
-		return stageSession(s, in.tfvars)
+		return stageSession(s, in, in.tfvars)
 	}); err != nil {
 		return "", err
 	}
@@ -639,6 +734,9 @@ func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Cli
 	}); err != nil {
 		return err
 	}
+	if err := bundlePhases(ctx, out, quiet, client, in, s); err != nil {
+		return err
+	}
 
 	aiKey := ""
 	if in.ai != nil {
@@ -650,9 +748,72 @@ func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Cli
 			return err
 		}
 	}
-	return step(out, quiet, "compose up", func() error {
+	if err := step(out, quiet, "compose up", func() error {
 		return upStack(ctx, client, in.images, s, aiKey)
-	})
+	}); err != nil {
+		return err
+	}
+
+	if in.bundle != nil && in.bundle.HasSetup {
+		return step(out, quiet, "run setup.sh", func() error {
+			return runCloudSetup(ctx, client, in.bundle, s)
+		})
+	}
+	return nil
+}
+
+// bundlePhases runs the pack/kind phases — install kind, push payload,
+// create cluster — gated on the launch having a bundle (kind steps further
+// gated on HasKind); split out of stackPhases to stay under the complexity
+// gate. A bare launch (nil bundle) is a no-op.
+func bundlePhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
+	in launchInputs, s *session.Session) error {
+	if in.bundle == nil {
+		return nil
+	}
+	if in.bundle.HasKind {
+		if err := step(out, quiet, "install kind", func() error {
+			return installKind(ctx, client, s)
+		}); err != nil {
+			return err
+		}
+	}
+	if err := step(out, quiet, "push payload", func() error {
+		return pushPayload(ctx, client, s)
+	}); err != nil {
+		return err
+	}
+	if in.bundle.HasKind {
+		if err := step(out, quiet, "create cluster", func() error {
+			return createCloudCluster(ctx, client, s)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scenarioCSV joins the bundle's scenario names for the setup hook env.
+func scenarioCSV(b *pack.Bundle) string {
+	names := make([]string, 0, len(b.Scenarios))
+	for _, sc := range b.Scenarios {
+		names = append(names, sc.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+// runCloudSetup executes the bundle hook inside the vscode container.
+func runCloudSetup(ctx context.Context, client *ssh.Client, b *pack.Bundle,
+	s *session.Session) error {
+	if err := s.SetPhase("setup"); err != nil {
+		return err
+	}
+	out, err := client.Run(ctx, stack.SetupCmd(s.Meta.Slug, b.Name, scenarioCSV(b)))
+	if err != nil {
+		return fmt.Errorf("setup.sh failed: %w (output: %s)", err,
+			strings.TrimSpace(out))
+	}
+	return logWrite(s, "setup.log", out)
 }
 
 // waitCloudInit blocks until the boot-time docker install finishes, on its
@@ -672,21 +833,90 @@ func waitCloudInit(ctx context.Context, client *ssh.Client, s *session.Session) 
 	return logWrite(s, "cloud-init.log", out)
 }
 
-// pushStack sends the staged compose file over ssh stdin into RemoteDir.
+// pushStack sends the staged compose file — and the override when a bundle
+// staged one — over ssh stdin into RemoteDir.
 func pushStack(ctx context.Context, client *ssh.Client, s *session.Session) error {
 	if err := s.SetPhase("push-stack"); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(filepath.Join(s.StackDir(), "compose.yaml"))
+	if err := pushStackFile(ctx, client, s, "compose.yaml"); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(s.StackDir(), "override.yaml")); err == nil {
+		return pushStackFile(ctx, client, s, "override.yaml")
+	}
+	return nil
+}
+
+// pushStackFile streams one staged stack file to the VM.
+func pushStackFile(ctx context.Context, client *ssh.Client, s *session.Session,
+	name string) error {
+	data, err := os.ReadFile(filepath.Join(s.StackDir(), name))
 	if err != nil {
 		return err
 	}
-
-	out, err := client.RunIn(ctx, bytes.NewReader(data), stack.PushCmd())
+	out, err := client.RunIn(ctx, bytes.NewReader(data), stack.PushCmd(name))
 	if err != nil {
-		return fmt.Errorf("push stack: %w (output: %s)", err, strings.TrimSpace(out))
+		return fmt.Errorf("push %s failed: %w (output: %s)", name, err,
+			strings.TrimSpace(out))
 	}
 	return nil
+}
+
+// installKind runs the pinned installer on the VM; idempotent re-runs are
+// cheap (command -v short-circuits).
+func installKind(ctx context.Context, client *ssh.Client, s *session.Session) error {
+	if err := s.SetPhase("install-kind"); err != nil {
+		return err
+	}
+	out, err := client.RunIn(ctx, strings.NewReader(kindx.InstallScript), "bash -s")
+	if err != nil {
+		return fmt.Errorf("kind install failed: %w (output: %s)", err,
+			strings.TrimSpace(out))
+	}
+	return logWrite(s, "kind-install.log", out)
+}
+
+// pushPayload streams the staged payload tree as one tar over ssh stdin.
+func pushPayload(ctx context.Context, client *ssh.Client, s *session.Session) error {
+	if err := s.SetPhase("push-payload"); err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if err := pack.WriteTar(&buf, filepath.Join(s.StackDir(), "payload")); err != nil {
+		return err
+	}
+
+	out, err := client.RunIn(ctx, &buf, stack.PushPayloadCmd())
+	if err != nil {
+		return fmt.Errorf("payload push failed: %w (output: %s)", err,
+			strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// createCloudCluster creates the cluster on the VM's docker, applies the
+// pack manifests, and writes the internal kubeconfig for the vscode mount.
+func createCloudCluster(ctx context.Context, client *ssh.Client,
+	s *session.Session) error {
+	if err := s.SetPhase("create-cluster"); err != nil {
+		return err
+	}
+	var log strings.Builder
+	for _, cmd := range []string{
+		kindx.CreateClusterCmd(s.Meta.Slug),
+		kindx.ApplyManifestsCmd(),
+		kindx.WriteKubeconfigCmd(s.Meta.Slug),
+	} {
+		out, err := client.Run(ctx, cmd)
+		log.WriteString("$ " + cmd + "\n" + out + "\n")
+		if err != nil {
+			logWrite(s, "kind-create.log", log.String())
+			return fmt.Errorf("cluster create failed: %w (output: %s)", err,
+				strings.TrimSpace(out))
+		}
+	}
+	return logWrite(s, "kind-create.log", log.String())
 }
 
 // pullStack pulls the session images on the VM — the slow phase; output
@@ -733,7 +963,7 @@ func upStack(ctx context.Context, client *ssh.Client, images resolvedImages,
 	}
 
 	out, err := client.RunIn(ctx, strings.NewReader(stack.EnvBlob(env)),
-		stack.ComposeUpCmd(s.Meta.Slug))
+		stack.ComposeUpCmd(s.Meta.Slug, s.Meta.Bundle != ""))
 	if err != nil {
 		return fmt.Errorf("compose up failed: %w (output: %s)", err,
 			strings.TrimSpace(out))
@@ -773,10 +1003,10 @@ func mintAIKey(ctx context.Context, ai provider.AI, cfg config.Config,
 	return key.Key, s.Save()
 }
 
-// stageSession materializes terraform sources, the compose file, and
-// tfvars into the session dir — including the cloud-init document the
-// VM boots with.
-func stageSession(s *session.Session, extra map[string]any) error {
+// stageSession materializes terraform sources, the compose file, the pack
+// payload and override when a bundle is selected, and tfvars — including
+// the cloud-init document the VM boots with.
+func stageSession(s *session.Session, in launchInputs, extra map[string]any) error {
 	if err := s.SetPhase("stage"); err != nil {
 		return err
 	}
@@ -785,6 +1015,16 @@ func stageSession(s *session.Session, extra map[string]any) error {
 	}
 	if err := stack.Stage(s.StackDir()); err != nil {
 		return err
+	}
+	if in.bundle != nil {
+		if err := pack.StagePayload(s.StackDir(), in.packFS, in.bundle); err != nil {
+			return err
+		}
+		override := stack.Override(true, in.bundle.HasLab, in.bundle.HasKind)
+		if err := os.WriteFile(filepath.Join(s.StackDir(), "override.yaml"),
+			[]byte(override), 0o644); err != nil {
+			return err
+		}
 	}
 
 	ud, err := stack.UserData(s.Meta.SSHUser)

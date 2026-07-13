@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/scenario.schema.json
+
+name: Fix the failing Python tests
+description: Make the Python test suite pass without changing the tests.

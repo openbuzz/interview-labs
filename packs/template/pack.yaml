@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/pack.schema.json
+
+contract: 1
+name: template
+version: 1.0.0
+description: Starting point for a new content pack — copy, rename, extend.

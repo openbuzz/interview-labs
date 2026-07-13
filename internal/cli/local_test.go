@@ -218,3 +218,107 @@ func TestLocalSSHExecsIntoVSCodeContainer(t *testing.T) {
 		t.Fatalf("argv = %v, want %q", gotArgv, want)
 	}
 }
+
+// blankProviderEnv keeps ambient credentials from configuring providers —
+// the local pseudo-provider must be the only configured one in these tests.
+func blankProviderEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"DIGITALOCEAN_TOKEN", "HCLOUD_TOKEN",
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+		"OPENROUTER_MANAGEMENT_KEY", "CLOUDFLARE_API_TOKEN"} {
+		t.Setenv(k, "")
+	}
+}
+
+// fakeLocalBins installs a logging stub for each named binary into a
+// hermetic PATH (dir alone — no fallback to the real PATH, so a real host
+// kind/kubectl can never leak into these tests) and returns the shared
+// calls.log path. Mirrors fakeBins in internal/kindx/kindx_test.go.
+func fakeLocalBins(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	script := "#!/bin/sh\necho \"${0##*/} $@\" >> " + log + "\nexit 0\n"
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name),
+			[]byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	return log
+}
+
+func TestLocalLaunchDevopsCreatesCluster(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	blankProviderEnv(t)
+	swapTTY(t, false)
+	log := fakeLocalBins(t, "docker", "kind", "kubectl")
+
+	out, code := runCmd(t, "launch", "--bundle", "devops")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	calls, _ := os.ReadFile(log)
+	got := string(calls)
+	for _, want := range []string{
+		"kind create cluster --name interview-",
+		"kubectl --kubeconfig", "apply -f",
+		"kind get kubeconfig", "--internal",
+		"docker compose",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("calls missing %q:\n%s", want, got)
+		}
+	}
+
+	all, _ := session.List()
+	s := all[0]
+	if !s.Meta.Kind {
+		t.Fatalf("meta.Kind = false")
+	}
+	if _, err := os.Stat(filepath.Join(s.StackDir(), "override.yaml")); err != nil {
+		t.Fatalf("override not staged: %v", err)
+	}
+}
+
+func TestLocalDestroyDeletesCluster(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	blankProviderEnv(t)
+	swapTTY(t, false)
+	log := fakeLocalBins(t, "docker", "kind", "kubectl")
+
+	if _, code := runCmd(t, "launch", "--bundle", "devops"); code != 0 {
+		t.Fatal("launch failed")
+	}
+	all, _ := session.List()
+	slug := all[0].Meta.Slug
+
+	if _, code := runCmd(t, "destroy", slug, "--yes"); code != 0 {
+		t.Fatal("destroy failed")
+	}
+
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "kind delete cluster --name interview-"+slug) {
+		t.Fatalf("no cluster delete in:\n%s", string(calls))
+	}
+}
+
+func TestLocalKindBundleNeedsHostBins(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	blankProviderEnv(t)
+	swapTTY(t, false)
+	_ = fakeLocalBins(t, "docker") // docker only — no kind/kubectl
+
+	out, code := runCmd(t, "launch", "--bundle", "devops")
+	if code == 0 || !strings.Contains(out, "kind") {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if all, _ := session.List(); len(all) != 0 {
+		t.Fatal("failed gate still created a session")
+	}
+}

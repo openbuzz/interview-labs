@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/scenario.schema.json
+
+name: Hello, candidate
+description: A warm-up task to verify the environment works.

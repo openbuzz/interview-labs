@@ -1,0 +1,32 @@
+---
+# ConfigMap for the payments namespace.
+# The deployment will reference this with the wrong name.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: payments
+data:
+  app.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        location / {
+            return 200 'healthy\n';
+            add_header Content-Type text/plain;
+        }
+    }
+---
+# ConfigMap for the notifications namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: email-templates
+  namespace: notifications
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>Email Service</title></head>
+    <body><h1>Notification templates loaded</h1></body>
+    </html>

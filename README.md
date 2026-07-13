@@ -75,6 +75,25 @@ Non-interactive use: set a provider env var (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN
 `CLOUDFLARE_API_TOKEN` override their config entries) and pass
 `--region`/`--size`/`--profile` to launch, `--yes` to destroy.
 
+## Content packs
+
+A pack is one organization's interview content; each bundle inside it is one
+position (`backend`, `devops`, …) holding the scenarios a candidate works on.
+
+```sh
+interview pack validate default          # inspect the embedded pack
+interview launch --bundle devops         # one position per session
+interview pack init ./my-pack            # scaffold your own from the template
+interview pack validate ./my-pack
+interview launch --pack ./my-pack --bundle demo
+```
+
+Scenario task files appear in the candidate's workspace under
+`/home/user/scenarios`. A bundle with `kind/cluster.yaml` gets a kubernetes
+cluster: on the session VM for cloud launches, or on this machine's docker
+for local ones (install `kind` and `kubectl` first — `interview doctor`
+checks). An optional `lab/setup.sh` runs once inside the candidate container.
+
 ## State
 
 - config: `$XDG_CONFIG_HOME/interview/config.yaml` (0600):

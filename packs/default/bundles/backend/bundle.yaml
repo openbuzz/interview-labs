@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/bundle.schema.json
+
+description: Backend developer — Go, Node.js and Python tasks.
+image: backend

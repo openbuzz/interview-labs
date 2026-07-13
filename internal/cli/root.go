@@ -161,6 +161,7 @@ Start with "interview doctor", then "interview init".`,
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newLaunchCmd())
 	root.AddCommand(newListCmd(), newInfoCmd(), newSSHCmd(), newDestroyCmd())
+	root.AddCommand(newPackCmd())
 	root.SetHelpTemplate(ui.Logo() + "\n\n" + root.HelpTemplate())
 	return root
 }

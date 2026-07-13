@@ -51,9 +51,18 @@ func TestSessionSectionFields(t *testing.T) {
 	}
 }
 
+func TestSessionSectionBundleRow(t *testing.T) {
+	s := newFactsSession(t, session.StatusReady, "203.0.113.9")
+	s.Meta.Pack, s.Meta.Bundle = "default", "devops"
+
+	if sec := sessionSection(s); !strings.Contains(sec, "devops") {
+		t.Fatalf("bundle row missing:\n%s", sec)
+	}
+}
+
 func TestSessionSectionEmptyIP(t *testing.T) {
 	s := newFactsSession(t, session.StatusFailed, "")
-	if sec := sessionSection(s); strings.Contains(sec, "ip") {
+	if sec := sessionSection(s); strings.Contains(sec, "\n  ip ") {
 		t.Fatalf("empty IP must omit the row:\n%s", sec)
 	}
 }

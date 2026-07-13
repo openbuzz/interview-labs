@@ -256,3 +256,41 @@ func TestDoctorChecksAIAndAccessProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorKindRowsMissing(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // nothing on PATH
+
+	out, _ := runCmd(t, "doctor")
+	for _, want := range []string{"kind", "kubectl", "local kubernetes"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDoctorKindVersionFloor(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	_ = fakeLocalBins(t, "kind", "kubectl") // present; version output is fake
+
+	old := kindToolVersion
+	kindToolVersion = func(bin string) (string, error) {
+		if bin == "kind" {
+			return "kind v0.20.0 go1.21 linux/amd64", nil // below the 0.32 floor
+		}
+		return "Client Version: v1.36.2", nil
+	}
+	t.Cleanup(func() { kindToolVersion = old })
+
+	out, _ := runCmd(t, "doctor")
+	if !strings.Contains(out, "below v0.32") {
+		t.Fatalf("no floor warning:\n%s", out)
+	}
+	if !strings.Contains(out, "v1.36.2") {
+		t.Fatalf("kubectl version row missing:\n%s", out)
+	}
+}

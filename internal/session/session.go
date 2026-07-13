@@ -36,6 +36,9 @@ type Metadata struct {
 	Size            string            `json:"size"`
 	Image           string            `json:"image"`
 	Profile         string            `json:"profile,omitempty"`
+	Pack            string            `json:"pack,omitempty"`
+	Bundle          string            `json:"bundle,omitempty"`
+	Kind            bool              `json:"kind,omitempty"`
 	Roles           map[string]string `json:"roles"`
 	SSHUser         string            `json:"ssh_user,omitempty"`
 	Terraform       TerraformInfo     `json:"terraform"`

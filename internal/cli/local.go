@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
+	"github.com/openbuzz/interview-labs/internal/kindx"
+	"github.com/openbuzz/interview-labs/internal/pack"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	"github.com/openbuzz/interview-labs/internal/stack"
@@ -41,7 +44,8 @@ func liveLocalSession() (*session.Session, error) {
 // runLocalLaunch drives the docker-on-this-machine pipeline: stage, mint,
 // compose up. No terraform, no billing gate, no ssh.
 func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
-	sel provider.Provider, profile string, f *launchFlags) error {
+	sel provider.Provider, profile string, f *launchFlags,
+	p *pack.Pack, bundle *pack.Bundle) error {
 	existing, err := liveLocalSession()
 	if err != nil {
 		return err
@@ -50,18 +54,13 @@ func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 		return fmt.Errorf("local session %s already exists — one local stack at a "+
 			"time (interview destroy %s)", existing.Meta.Slug, existing.Meta.Slug)
 	}
-
-	ai := activeAI(cfg, f.noAI || !isAIProfile(profile))
-	roles := map[string]string{"vm": sel.Name()}
-	if ai != nil {
-		roles["ai"] = ai.Name()
-	}
-	s, err := session.New("", "", "", "", roles, session.TerraformInfo{})
-	if err != nil {
+	if err := gateKindHostBins(bundle); err != nil {
 		return err
 	}
-	s.Meta.Profile, s.Meta.GatewayPassword = profile, localPassword
-	if err := s.Save(); err != nil {
+
+	ai := activeAI(cfg, f.noAI || !isAIProfile(profile))
+	s, err := newLocalSession(sel, profile, ai, p, bundle)
+	if err != nil {
 		return err
 	}
 	release, err := s.Lock()
@@ -74,23 +73,63 @@ func runLocalLaunch(cmd *cobra.Command, out io.Writer, cfg config.Config,
 	if err != nil {
 		return failLaunch(out, s, err)
 	}
-	if err := runLocalStack(cmd.Context(), out, cfg, ai, images, s); err != nil {
+	if err := runLocalStack(cmd.Context(), out, cfg, ai, images,
+		packOrNilFS(p), bundle, s); err != nil {
 		return failLaunch(out, s, err)
 	}
 	return nil
 }
 
+// gateKindHostBins requires kind + kubectl on this machine before a kind
+// bundle launches — checked before session.New so a failed gate leaves no
+// session behind.
+func gateKindHostBins(bundle *pack.Bundle) error {
+	if bundle == nil || !bundle.HasKind {
+		return nil
+	}
+	if err := kindx.HostBinsPresent(); err != nil {
+		return fmt.Errorf("%w — local kubernetes bundles need kind and kubectl "+
+			"on this machine (brew install kind kubectl)", err)
+	}
+	return nil
+}
+
+// newLocalSession creates the session and records the picked bundle, if
+// any — mirrors newLaunchSession's cloud-path shape.
+func newLocalSession(sel provider.Provider, profile string, ai provider.AI,
+	p *pack.Pack, bundle *pack.Bundle) (*session.Session, error) {
+	roles := map[string]string{"vm": sel.Name()}
+	if ai != nil {
+		roles["ai"] = ai.Name()
+	}
+	s, err := session.New("", "", "", "", roles, session.TerraformInfo{})
+	if err != nil {
+		return nil, err
+	}
+	s.Meta.Profile, s.Meta.GatewayPassword = profile, localPassword
+	if bundle != nil {
+		s.Meta.Pack, s.Meta.Bundle, s.Meta.Kind = p.Name, bundle.Name, bundle.HasKind
+	}
+	return s, s.Save()
+}
+
 // runLocalStack runs the local phases; step rows mirror the cloud pipeline.
 func runLocalStack(ctx context.Context, out io.Writer, cfg config.Config,
-	ai provider.AI, images resolvedImages, s *session.Session) error {
+	ai provider.AI, images resolvedImages, packFS fs.FS, bundle *pack.Bundle,
+	s *session.Session) error {
 	quiet := quietOutput()
 	if err := step(out, quiet, "stage", func() error {
-		if err := s.SetPhase("stage"); err != nil {
-			return err
-		}
-		return stack.Stage(s.StackDir())
+		return localStage(s, packFS, bundle)
 	}); err != nil {
 		return err
+	}
+
+	if bundle != nil && bundle.HasKind {
+		if err := step(out, quiet, "create cluster", func() error {
+			return localCreateCluster(ctx, out, quiet, s)
+		}); err != nil {
+			return err
+		}
 	}
 
 	aiKey := ""
@@ -109,7 +148,57 @@ func runLocalStack(ctx context.Context, out io.Writer, cfg config.Config,
 	}); err != nil {
 		return err
 	}
+
+	if err := runLocalSetup(ctx, out, quiet, bundle, s); err != nil {
+		return err
+	}
 	return printLaunchSummary(out, s)
+}
+
+// localStage materializes the compose file and, when a bundle is picked,
+// the payload tree plus the compose override.
+func localStage(s *session.Session, packFS fs.FS, bundle *pack.Bundle) error {
+	if err := s.SetPhase("stage"); err != nil {
+		return err
+	}
+	if err := stack.Stage(s.StackDir()); err != nil {
+		return err
+	}
+	if bundle == nil {
+		return nil
+	}
+	if err := pack.StagePayload(s.StackDir(), packFS, bundle); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.StackDir(), "override.yaml"),
+		[]byte(stack.Override(true, bundle.HasLab, bundle.HasKind)), 0o644)
+}
+
+// localCreateCluster stands the session cluster up on this machine's
+// docker; the admin kubeconfig stays session-scoped so ~/.kube/config is
+// never touched.
+func localCreateCluster(ctx context.Context, out io.Writer, quiet bool,
+	s *session.Session) error {
+	if err := s.SetPhase("create-cluster"); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(filepath.Join(s.LogsDir(), "kind-create.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	dest := io.Writer(logFile)
+	if !quiet {
+		dest = io.MultiWriter(out, logFile)
+	}
+
+	payload := filepath.Join(s.StackDir(), "payload")
+	return kindx.CreateLocal(ctx, s.Meta.Slug,
+		filepath.Join(payload, "kind", "cluster.yaml"),
+		filepath.Join(payload, "kind", "manifests"),
+		filepath.Join(payload, "kubeconfig.admin"),
+		filepath.Join(payload, "kubeconfig"), dest)
 }
 
 // localComposeUp starts the stack on the host engine; env vars carry the
@@ -130,11 +219,40 @@ func localComposeUp(ctx context.Context, out io.Writer, quiet bool,
 		env = append(env, "OPENROUTER_API_KEY="+aiKey)
 	}
 
+	args := []string{"compose"}
+	if s.Meta.Bundle != "" {
+		args = append(args, "-f", "compose.yaml", "-f", "override.yaml")
+	}
+	args = append(args, "-p", "interview-"+s.Meta.Slug, "up", "-d", "--wait")
 	if err := execDocker(ctx, out, quiet, s, "stack-up.log", s.StackDir(), env,
-		"compose", "-p", "interview-"+s.Meta.Slug, "up", "-d", "--wait"); err != nil {
+		args...); err != nil {
 		return err
 	}
 	return s.SetURL(localURL)
+}
+
+// runLocalSetup runs the bundle's setup.sh step when the bundle has one,
+// exec'ing into the vscode container over the host docker CLI — the local
+// mirror of the cloud runCloudSetup phase; split out of runLocalStack (guard
+// included) to stay under the complexity gate.
+func runLocalSetup(ctx context.Context, out io.Writer, quiet bool, bundle *pack.Bundle,
+	s *session.Session) error {
+	if bundle == nil || !bundle.HasSetup {
+		return nil
+	}
+	return step(out, quiet, "run setup.sh", func() error {
+		if err := s.SetPhase("setup"); err != nil {
+			return err
+		}
+		return execDocker(ctx, out, quiet, s, "setup.log", s.StackDir(), nil,
+			"compose", "-f", "compose.yaml", "-f", "override.yaml",
+			"-p", "interview-"+s.Meta.Slug, "exec", "-T",
+			"-e", "INTERVIEW_SESSION_ID="+s.Meta.Slug,
+			"-e", "INTERVIEW_BUNDLE="+bundle.Name,
+			"-e", "INTERVIEW_SCENARIOS="+scenarioCSV(bundle),
+			"-e", "INTERVIEW_LAB_DIR=/opt/interview/lab",
+			"vscode", "bash", "/opt/interview/lab/setup.sh")
+	})
 }
 
 // execDocker runs one docker command, teeing output to the session log

@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/bundle.schema.json
+
+description: Demo position — replace with a real role.
+image: backend

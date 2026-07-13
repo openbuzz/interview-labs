@@ -1,0 +1,23 @@
+  ██╗███╗   ██╗████████╗███████╗██████╗ ██╗   ██╗██╗███████╗██╗    ██╗
+  ██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗██║   ██║██║██╔════╝██║    ██║
+  ██║██╔██╗ ██║   ██║   █████╗  ██████╔╝██║   ██║██║█████╗  ██║ █╗ ██║
+  ██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗╚██╗ ██╔╝██║██╔══╝  ██║███╗██║
+  ██║██║ ╚████║   ██║   ███████╗██║  ██║ ╚████╔╝ ██║███████╗╚███╔███╔╝
+  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝
+
+                    ██╗      █████╗ ██████╗ ███████╗
+                    ██║     ██╔══██╗██╔══██╗██╔════╝
+                    ██║     ███████║██████╔╝███████╗
+                    ██║     ██╔══██║██╔══██╗╚════██║
+                    ███████╗██║  ██║██████╔╝███████║
+                    ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝
+
+               Stop testing answers. Start testing work.
+
+┃ Select an interview bundle
+┃ A bundle is one position's scenario set. Bare session skips pack content.
+┃ > bare session — no pack content
+┃   backend   — Backend developer — Go, Node.js and Python tasks. (4 scenarios)
+┃   devops    — Infrastructure engineer — Kubernetes troubleshooting labs. (3 scenarios)
+
+↑ up • ↓ down • / filter • enter submit

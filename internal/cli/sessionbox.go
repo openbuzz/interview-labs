@@ -32,6 +32,7 @@ func sessionTitle(s *session.Session) string {
 func sessionSection(s *session.Session) string {
 	rows := []string{fmt.Sprintf("%-10s%s", "provider", s.Meta.Roles["vm"])}
 	rows = appendRow(rows, "profile", s.Meta.Profile)
+	rows = appendRow(rows, "bundle", s.Meta.Bundle)
 	if s.Meta.AIKeyHash != "" {
 		cap := strconv.FormatFloat(s.Meta.AICapUSD, 'f', -1, 64)
 		rows = append(rows, fmt.Sprintf("%-10s%s (cap $%s)", "ai",

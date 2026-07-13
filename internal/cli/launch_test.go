@@ -21,6 +21,7 @@ import (
 
 	"github.com/openbuzz/interview-labs/internal/config"
 	"github.com/openbuzz/interview-labs/internal/openrouter"
+	"github.com/openbuzz/interview-labs/internal/pack"
 	"github.com/openbuzz/interview-labs/internal/provider"
 	"github.com/openbuzz/interview-labs/internal/session"
 	sshtest "github.com/openbuzz/interview-labs/internal/ssh"
@@ -68,6 +69,14 @@ func swapTTY(t *testing.T, tty bool) {
 	old := isTTY
 	isTTY = func() bool { return tty }
 	t.Cleanup(func() { isTTY = old })
+}
+
+// swapPickBundle overrides the pickBundle seam for the test's duration.
+func swapPickBundle(t *testing.T, sel string) {
+	t.Helper()
+	old := pickBundle
+	pickBundle = func(*pack.Pack) (string, error) { return sel, nil }
+	t.Cleanup(func() { pickBundle = old })
 }
 
 // assertSessionMeta checks the sole session's provider role, ssh user and image.
@@ -259,6 +268,7 @@ func TestLaunchPersistsProviderPick(t *testing.T) {
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
+	swapPickBundle(t, "")
 	oldPick := pickVMProvider
 	t.Cleanup(func() { pickVMProvider = oldPick })
 	var sawPreselect string
@@ -297,6 +307,7 @@ func TestLaunchPersistsPickedRegionAndInstance(t *testing.T) {
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
+	swapPickBundle(t, "")
 	oldPick, oldRS := pickVMProvider, pickRegionSize
 	t.Cleanup(func() { pickVMProvider, pickRegionSize = oldPick, oldRS })
 	oldProfile := pickProfile
@@ -440,9 +451,10 @@ func TestLaunchQuietRendersPhaseRows(t *testing.T) {
 	oldUI := ui.Interactive
 	ui.Interactive = func() bool { return false } // plain step lines, no ANSI redraw
 	t.Cleanup(func() { ui.Interactive = oldUI })
-	// swapTTY(true) also routes selectVMProvider and ensureProfile through
-	// the real huh pickers; stub both like the sibling TTY tests do so the
-	// sandbox (no /dev/tty) doesn't block.
+	// swapTTY(true) also routes ensureBundle, selectVMProvider and
+	// ensureProfile through the real huh pickers; stub all three like the
+	// sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
+	swapPickBundle(t, "")
 	oldPick := pickVMProvider
 	t.Cleanup(func() { pickVMProvider = oldPick })
 	pickVMProvider = func(configured []provider.Provider,
@@ -487,9 +499,10 @@ func TestLaunchVerboseStreamsTerraform(t *testing.T) {
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
 	t.Setenv("CLOUDFLARE_API_TOKEN", "")
 	swapTTY(t, true)
-	// swapTTY(true) also routes selectVMProvider and ensureProfile through
-	// the real huh pickers; stub both like the sibling TTY tests do so the
-	// sandbox (no /dev/tty) doesn't block.
+	// swapTTY(true) also routes ensureBundle, selectVMProvider and
+	// ensureProfile through the real huh pickers; stub all three like the
+	// sibling TTY tests do so the sandbox (no /dev/tty) doesn't block.
+	swapPickBundle(t, "")
 	oldPick := pickVMProvider
 	t.Cleanup(func() { pickVMProvider = oldPick })
 	pickVMProvider = func(configured []provider.Provider,
@@ -689,6 +702,7 @@ func TestLaunchConfirmNoCancelsCleanly(t *testing.T) {
 	swapTTY(t, true)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
+	swapPickBundle(t, "")
 	oldPick, oldRS, oldC := pickVMProvider, pickRegionSize, confirmLaunch
 	t.Cleanup(func() {
 		pickVMProvider, pickRegionSize, confirmLaunch = oldPick, oldRS, oldC
@@ -732,6 +746,7 @@ func TestLaunchYesSkipsConfirmButPrintsSummary(t *testing.T) {
 	swapTTY(t, true)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
+	swapPickBundle(t, "")
 	oldPick, oldRS, oldC := pickVMProvider, pickRegionSize, confirmLaunch
 	t.Cleanup(func() {
 		pickVMProvider, pickRegionSize, confirmLaunch = oldPick, oldRS, oldC
@@ -795,6 +810,7 @@ func TestLaunchSummaryFlagsPathFallsBackToSlugs(t *testing.T) {
 	swapTTY(t, true)
 	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
 
+	swapPickBundle(t, "")
 	oldPick, oldC := pickVMProvider, confirmLaunch
 	t.Cleanup(func() { pickVMProvider, confirmLaunch = oldPick, oldC })
 	oldProfile := pickProfile
@@ -1121,5 +1137,208 @@ func TestLaunchAIProfileMints(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "sk-or-child") {
 		t.Fatalf("key value leaked into metadata:\n%s", raw)
+	}
+}
+
+func TestLaunchBundleAndProfileFlagsConflict(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, false)
+
+	out, code := runCmd(t, "launch", "--bundle", "devops", "--profile", "backend")
+	if code != 2 || !strings.Contains(out, "--bundle and --profile") {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+}
+
+func TestLaunchUnknownBundleExits2(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	swapTTY(t, false)
+
+	out, code := runCmd(t, "launch", "--bundle", "nope",
+		"--region", "fra1", "--size", "s-1vcpu-1gb")
+	if code != 2 || !strings.Contains(out, `bundle "nope"`) {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+}
+
+func TestBundleProfileDerivation(t *testing.T) {
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	b := &pack.Bundle{Name: "devops", Image: "devops"}
+	cfgAI := config.Config{}
+	cfgAI.Providers.OpenRouter.ManagementKey = "k"
+
+	if got := bundleProfile(b, config.Config{}, false); got != "devops" {
+		t.Fatalf("no-AI derivation = %q", got)
+	}
+	if got := bundleProfile(b, cfgAI, false); got != "devops-ai" {
+		t.Fatalf("AI derivation = %q", got)
+	}
+	if got := bundleProfile(b, cfgAI, true); got != "devops" {
+		t.Fatalf("--no-ai derivation = %q", got)
+	}
+}
+
+// assertCommandsEqual compares an exact remote exec sequence.
+func assertCommandsEqual(t *testing.T, rec *sshtest.ExecRecorder, want []string) {
+	t.Helper()
+	got := rec.Commands()
+	if len(got) != len(want) {
+		t.Fatalf("remote commands (%d):\n%q\nwant (%d):\n%q",
+			len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("command %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLaunchBackendBundlePipeline(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+
+	addr, privPEM, pub, rec := sshtest.StartRecordingTestServer(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--bundle", "backend",
+		"--region", "fra1", "--size", "s-1vcpu-1gb")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	all, _ := session.List()
+	s := all[0]
+	if s.Meta.Bundle != "backend" || s.Meta.Pack != "default" || s.Meta.Kind {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+	if s.Meta.Profile != "backend" {
+		t.Fatalf("profile = %q (no AI configured)", s.Meta.Profile)
+	}
+
+	gw := "ghcr.io/openbuzz/interview-labs-gateway:edge"
+	vs := "ghcr.io/openbuzz/interview-labs-vscode:edge-backend"
+	assertCommandsEqual(t, rec, []string{
+		"cloud-init status --wait",
+		"mkdir -p /opt/interview/docker && cat > /opt/interview/docker/compose.yaml",
+		"mkdir -p /opt/interview/docker && cat > /opt/interview/docker/override.yaml",
+		"cd /opt/interview/docker && GATEWAY_IMAGE='" + gw +
+			"' VSCODE_IMAGE='" + vs + "' docker compose pull",
+		"mkdir -p /opt/interview/docker && tar -xf - -C /opt/interview/docker",
+		"cd /opt/interview/docker && set -a && . /dev/stdin && set +a && " +
+			"docker compose -f compose.yaml -f override.yaml -p interview-" +
+			s.Meta.Slug + " up -d --wait",
+	})
+
+	// Staged payload on the operator side mirrors the tar content.
+	if _, err := os.Stat(filepath.Join(s.StackDir(),
+		"payload/workspace/fix-tests-go")); err != nil {
+		t.Fatalf("workspace staging: %v", err)
+	}
+}
+
+func TestLaunchDevopsKindPipeline(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+
+	addr, privPEM, pub, rec := sshtest.StartRecordingTestServer(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--bundle", "devops",
+		"--region", "fra1", "--size", "s-2vcpu-4gb")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	all, _ := session.List()
+	s := all[0]
+	if !s.Meta.Kind || s.Meta.Bundle != "devops" {
+		t.Fatalf("meta = %+v", s.Meta)
+	}
+
+	gw := "ghcr.io/openbuzz/interview-labs-gateway:edge"
+	vs := "ghcr.io/openbuzz/interview-labs-vscode:edge-devops"
+	assertCommandsEqual(t, rec, []string{
+		"cloud-init status --wait",
+		"mkdir -p /opt/interview/docker && cat > /opt/interview/docker/compose.yaml",
+		"mkdir -p /opt/interview/docker && cat > /opt/interview/docker/override.yaml",
+		"cd /opt/interview/docker && GATEWAY_IMAGE='" + gw +
+			"' VSCODE_IMAGE='" + vs + "' docker compose pull",
+		"bash -s",
+		"mkdir -p /opt/interview/docker && tar -xf - -C /opt/interview/docker",
+		"kind create cluster --name interview-" + s.Meta.Slug +
+			" --config /opt/interview/docker/payload/kind/cluster.yaml --wait 60s",
+		`for f in /opt/interview/docker/payload/kind/manifests/*.yaml; do ` +
+			`kubectl apply -f "$f" || exit 1; done`,
+		"kind get kubeconfig --name interview-" + s.Meta.Slug +
+			" --internal > /opt/interview/docker/payload/kubeconfig && " +
+			"chown 1000:1000 /opt/interview/docker/payload/kubeconfig",
+		"cd /opt/interview/docker && set -a && . /dev/stdin && set +a && " +
+			"docker compose -f compose.yaml -f override.yaml -p interview-" +
+			s.Meta.Slug + " up -d --wait",
+	})
+}
+
+func TestLaunchDirPackRunsSetup(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+
+	addr, privPEM, pub, rec := sshtest.StartRecordingTestServer(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+	_ = fakeTFForLaunch(t, host, privPEM, pub)
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	out, code := runCmd(t, "launch", "--pack", "testdata/setuppack",
+		"--bundle", "demo", "--region", "fra1", "--size", "s-1vcpu-1gb")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+
+	all, _ := session.List()
+	s := all[0]
+	last := rec.Commands()[len(rec.Commands())-1]
+	if !strings.Contains(last, "bash /opt/interview/lab/setup.sh") ||
+		!strings.Contains(last, "-e INTERVIEW_SCENARIOS=hello") {
+		t.Fatalf("last command = %q", last)
+	}
+	if s.Meta.Pack != "setuppack" {
+		t.Fatalf("meta.Pack = %q", s.Meta.Pack)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
+	"github.com/openbuzz/interview-labs/internal/kindx"
 	"github.com/openbuzz/interview-labs/internal/session"
 	"github.com/openbuzz/interview-labs/internal/terraform"
 	"github.com/openbuzz/interview-labs/internal/ui"
@@ -185,6 +186,13 @@ func runLocalDestroy(ctx context.Context, out io.Writer, cfg config.Config,
 	s *session.Session) error {
 	quiet := quietOutput()
 	s.SetStatus(session.StatusDestroying)
+	if s.Meta.Kind {
+		if err := step(out, quiet, "delete cluster", func() error {
+			return kindx.DeleteLocal(ctx, s.Meta.Slug, io.Discard)
+		}); err != nil {
+			return failDestroy(out, s, err)
+		}
+	}
 	if err := step(out, quiet, "compose down", func() error {
 		return execDocker(ctx, out, quiet, s, "stack-down.log", "", nil,
 			"compose", "-p", "interview-"+s.Meta.Slug, "down", "-v")

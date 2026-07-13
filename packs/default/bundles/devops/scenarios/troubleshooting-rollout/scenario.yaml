@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/openbuzz/interview-labs/main/spec/pack/v1/scenario.schema.json
+
+name: Stuck rollout
+description: The email-service rollout never completes — fix it.
