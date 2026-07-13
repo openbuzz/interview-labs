@@ -369,7 +369,8 @@ func confirmGate(out io.Writer, vm provider.VM, regionLabel, region string,
 	if !isTTY() {
 		return false, nil
 	}
-	fmt.Fprintln(out, launchSummaryBox(vm, regionLabel, region, si, size))
+	fmt.Fprintln(out, launchSummary(vm, regionLabel, region, si, size))
+	fmt.Fprintln(out)
 	if yes {
 		return false, nil
 	}
@@ -394,7 +395,7 @@ func selectVMProvider(out io.Writer, cfg *config.Config) (provider.Provider, err
 		}
 	}
 	if len(configured) == 0 {
-		fmt.Fprintln(out, ui.Box("No providers configured", ui.Fail,
+		fmt.Fprintln(out, ui.Section(ui.Fail.Render("NO PROVIDERS CONFIGURED"),
 			"Launch needs a configured cloud provider to host the interview VM.",
 			"",
 			`Run "interview init" to configure one, then re-run "interview launch".`))
@@ -508,9 +509,9 @@ func ensureRegionSize(ctx context.Context, out io.Writer, vm provider.VM,
 	return r.Label, &si, cfg.Write()
 }
 
-// launchSummaryBox renders the pre-provision summary; falls back to raw
+// launchSummary renders the pre-provision summary; falls back to raw
 // slugs (and no price row) when the flags path supplied no SizeInfo.
-func launchSummaryBox(vm provider.VM, regionLabel, region string,
+func launchSummary(vm provider.VM, regionLabel, region string,
 	si *provider.SizeInfo, size string) string {
 	regionRow := regionLabel
 	if regionRow == "" {
@@ -530,7 +531,7 @@ func launchSummaryBox(vm provider.VM, regionLabel, region string,
 		rows = append(rows, fmt.Sprintf("Price      ~%s%.2f/h, billed until %q",
 			si.Currency, price, "interview destroy"))
 	}
-	return ui.Box("Launch summary", ui.Accent, rows...)
+	return ui.Section(ui.SectionTitle("launch"), rows...)
 }
 
 // step runs one launch/destroy phase: a spinner row when quiet, plain

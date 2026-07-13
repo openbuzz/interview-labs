@@ -58,7 +58,8 @@ func (lv) Configured(config.Config) bool { return lookDocker() == nil }
 // Configure has nothing to store: it explains the requirement and probes
 // the daemon once for immediate feedback.
 func (l lv) Configure(ctx context.Context, _ *config.Config) error {
-	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
+	fmt.Fprintln(out, ui.Section(ui.SectionTitle(guidanceTitle),
+		strings.Split(guidance, "\n")...))
 
 	if err := provider.TestCredentials(ctx, out, ui.Step, func(ctx context.Context) error {
 		return l.ValidateCreds(ctx, config.Config{})

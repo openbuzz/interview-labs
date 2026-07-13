@@ -65,7 +65,8 @@ func (hz) Configured(cfg config.Config) bool { return token(cfg) != "" }
 
 // Configure shows the token guidance, prompts, validates with retries, stores.
 func (hz) Configure(ctx context.Context, cfg *config.Config) error {
-	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
+	fmt.Fprintln(out, ui.Section(ui.SectionTitle(guidanceTitle),
+		strings.Split(guidance, "\n")...))
 	fmt.Fprintln(out, ui.Faint.Render("The token is validated before it is stored (0600)."))
 
 	tok, err := promptToken(func(t string) error {

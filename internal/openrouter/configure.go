@@ -90,7 +90,8 @@ func (or) Configured(cfg config.Config) bool { return managementKey(cfg) != "" }
 // Configure shows the management-key guidance, prompts for key and cap,
 // validates the key with retries, stores both.
 func (or) Configure(ctx context.Context, cfg *config.Config) error {
-	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
+	fmt.Fprintln(out, ui.Section(ui.SectionTitle(guidanceTitle),
+		strings.Split(guidance, "\n")...))
 	fmt.Fprintln(out, ui.Faint.Render(
 		"The management key is validated before it is stored (0600)."))
 

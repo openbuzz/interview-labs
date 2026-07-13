@@ -83,7 +83,7 @@ func TestInitConfiguresProviderThenExits(t *testing.T) {
 	if cfg.Providers.DigitalOcean.Token != "tok" {
 		t.Fatal("configure result not persisted")
 	}
-	for _, want := range []string{"Setup", "DigitalOcean", "interview launch"} {
+	for _, want := range []string{"SETUP", "DigitalOcean", "interview launch"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("summary missing %q:\n%s", want, out)
 		}

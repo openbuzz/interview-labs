@@ -84,3 +84,20 @@ func TestStepInteractiveAnimates(t *testing.T) {
 		t.Fatalf("missing final row:\n%q", buf.String())
 	}
 }
+
+func TestStepRowsIndented(t *testing.T) {
+	old := Interactive
+	Interactive = func() bool { return false }
+	t.Cleanup(func() { Interactive = old })
+
+	var buf bytes.Buffer
+	if err := Step(&buf, "stage", func(func(string)) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			t.Fatalf("step line %d not indented: %q", i, line)
+		}
+	}
+}

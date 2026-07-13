@@ -120,7 +120,8 @@ func (cf) Configured(cfg config.Config) bool {
 // resolves the zone: live picker when the list call works, manual entry
 // otherwise. Stores token + zone id + domain.
 func (cf) Configure(ctx context.Context, cfg *config.Config) error {
-	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
+	fmt.Fprintln(out, ui.Section(ui.SectionTitle(guidanceTitle),
+		strings.Split(guidance, "\n")...))
 	fmt.Fprintln(out, ui.Faint.Render("The token is validated before it is stored (0600)."))
 
 	tok, err := promptToken(notEmpty("token"))

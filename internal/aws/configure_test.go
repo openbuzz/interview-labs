@@ -35,7 +35,7 @@ func TestConfigureStoresValidatedPair(t *testing.T) {
 		cfg.Providers.AWS.SecretAccessKey != "sec" {
 		t.Fatalf("stored = %+v", cfg.Providers.AWS)
 	}
-	if !strings.Contains(buf.String(), "How to create AWS credentials") {
+	if !strings.Contains(buf.String(), "HOW TO CREATE AWS CREDENTIALS") {
 		t.Fatalf("guidance missing:\n%s", buf.String())
 	}
 }

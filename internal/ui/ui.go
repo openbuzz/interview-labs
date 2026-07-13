@@ -99,15 +99,34 @@ func RowOK(name, detail string) string   { return row(GlyphOK, OK, name, detail)
 func RowWarn(name, detail string) string { return row(GlyphWarn, Warn, name, detail) }
 func RowFail(name, detail string) string { return row(GlyphFail, Fail, name, detail) }
 
-// Box renders a rounded-border block: bold title, blank line, body lines.
-func Box(title string, style lipgloss.Style, lines ...string) string {
-	body := style.Bold(true).Render(title) + "\n\n" + strings.Join(lines, "\n")
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(style.GetForeground()).
-		Padding(1, 2).
-		Width(Width - 2).
-		Render(body)
+// SectionTitle renders a section label: faint uppercase.
+func SectionTitle(label string) string {
+	return Faint.Render(strings.ToUpper(label))
+}
+
+// Section renders a labeled block: the title line verbatim (callers style
+// composite titles themselves), body lines indented two spaces. Empty lines
+// stay empty — no trailing indent whitespace.
+func Section(title string, lines ...string) string {
+	var b strings.Builder
+	b.WriteString(title)
+	for _, l := range lines {
+		b.WriteString("\n")
+		if l != "" {
+			b.WriteString("  " + l)
+		}
+	}
+	return b.String()
+}
+
+// zoneRule is the horizontal delimiter of a copy zone.
+func zoneRule() string { return Faint.Render(strings.Repeat("─", Width)) }
+
+// CopyZone renders pasteable content: faint label, solid rules, interior
+// verbatim and unstyled — a triple-click must grab clean text.
+func CopyZone(label string, lines ...string) string {
+	parts := append([]string{SectionTitle(label), zoneRule()}, lines...)
+	return strings.Join(append(parts, zoneRule()), "\n")
 }
 
 // Badge renders a provider's configured state glyph.
@@ -147,7 +166,7 @@ func FormKeyMap() *huh.KeyMap {
 
 // receiptLine formats the transcript line a completed form leaves behind.
 func receiptLine(title, choice string) string {
-	return Faint.Render("┃ " + title + " → " + choice)
+	return "  " + Faint.Render(title+" → "+choice)
 }
 
 // SelectForm runs one single-select with the house theme, keymap, title

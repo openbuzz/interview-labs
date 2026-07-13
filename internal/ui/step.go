@@ -29,7 +29,7 @@ func Step(w io.Writer, title string, fn func(update func(string)) error) error {
 	}
 
 	if !Interactive() {
-		fmt.Fprintln(w, Faint.Render("… "+title))
+		fmt.Fprintln(w, "  "+Faint.Render("… "+title))
 		err := fn(update)
 		finishStep(w, read(), start, err)
 		return err
@@ -46,7 +46,7 @@ func Step(w io.Writer, title string, fn func(update func(string)) error) error {
 			case <-done:
 				return
 			case <-tick.C:
-				fmt.Fprintf(w, "\r\x1b[2K%s %s (%s)",
+				fmt.Fprintf(w, "\r\x1b[2K  %s %s (%s)",
 					Accent.Render(stepFrames[i%len(stepFrames)]), read(),
 					stepElapsed(start))
 			}
@@ -64,10 +64,10 @@ func Step(w io.Writer, title string, fn func(update func(string)) error) error {
 // finishStep prints the resolved row for a step.
 func finishStep(w io.Writer, title string, start time.Time, err error) {
 	if err != nil {
-		fmt.Fprintln(w, RowFail(title, err.Error()))
+		fmt.Fprintln(w, "  "+RowFail(title, err.Error()))
 		return
 	}
-	fmt.Fprintln(w, RowOK(title, stepElapsed(start)))
+	fmt.Fprintln(w, "  "+RowOK(title, stepElapsed(start)))
 }
 
 // stepElapsed renders a compact duration: 0s, 42s, 1m12s.

@@ -125,7 +125,7 @@ func runInitLoop(ctx context.Context, out io.Writer, cfg *config.Config) error {
 	}
 }
 
-// printInitSummary renders the final per-provider state box and next step.
+// printInitSummary renders the final per-provider state section and next step.
 func printInitSummary(out io.Writer, cfg config.Config) {
 	rows := make([]string, 0, len(providers))
 	anyConfigured := false
@@ -138,6 +138,7 @@ func printInitSummary(out io.Writer, cfg config.Config) {
 	if anyConfigured {
 		style, next = ui.OK, "interview launch"
 	}
-	fmt.Fprintln(out, ui.Box("Setup", style, rows...))
+	fmt.Fprintln(out, ui.Section(style.Render("SETUP"), rows...))
+	fmt.Fprintln(out)
 	fmt.Fprintln(out, ui.Next(next))
 }

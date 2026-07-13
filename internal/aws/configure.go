@@ -86,7 +86,8 @@ func (aw) Configured(cfg config.Config) bool {
 // Configure shows the IAM guidance, prompts for the credential pair,
 // validates it with retries, stores it.
 func (aw) Configure(ctx context.Context, cfg *config.Config) error {
-	fmt.Fprintln(out, ui.Box(guidanceTitle, ui.Accent, strings.Split(guidance, "\n")...))
+	fmt.Fprintln(out, ui.Section(ui.SectionTitle(guidanceTitle),
+		strings.Split(guidance, "\n")...))
 	fmt.Fprintln(out, ui.Faint.Render(
 		"The IAM user credentials are validated before they are stored (0600)."))
 

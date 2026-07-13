@@ -10,7 +10,7 @@ func newInfoCmd() *cobra.Command {
 		Short: "show session details",
 		Long: `Show one session's details.
 
-Prints the session box — status, provider, IP, OS image, ssh user, region,
+Prints the session details — status, provider, IP, OS image, ssh user, region,
 size, created — plus the raw ssh line and next steps for ready sessions.
 Without a slug: the sole session, or an interactive picker on a terminal.`,
 		Args: cobra.MaximumNArgs(1),

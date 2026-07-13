@@ -8,7 +8,7 @@ import (
 )
 
 func TestInfoWithSlug(t *testing.T) {
-	s := newBoxSession(t, session.StatusReady, "203.0.113.9")
+	s := newFactsSession(t, session.StatusReady, "203.0.113.9")
 
 	out, code := runCmd(t, "info", s.Meta.Slug)
 
@@ -16,7 +16,7 @@ func TestInfoWithSlug(t *testing.T) {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
 	for _, want := range []string{
-		"Session " + s.Meta.Slug, "203.0.113.9", "ubuntu-26-04-x64",
+		"SESSION", s.Meta.Slug, "203.0.113.9", "ubuntu-26-04-x64",
 		"interview ssh " + s.Meta.Slug,
 	} {
 		if !strings.Contains(out, want) {

@@ -39,15 +39,6 @@ func TestLogoArt(t *testing.T) {
 	}
 }
 
-func TestBox(t *testing.T) {
-	box := Box("Title Here", Accent, "line one", "", "line two")
-	for _, want := range []string{"╭", "╰", "Title Here", "line one", "line two"} {
-		if !strings.Contains(box, want) {
-			t.Fatalf("box missing %q:\n%s", want, box)
-		}
-	}
-}
-
 func TestBadge(t *testing.T) {
 	if got := Badge(true); !strings.Contains(got, GlyphOK) {
 		t.Fatalf("configured badge = %q, want %q", got, GlyphOK)
@@ -80,15 +71,6 @@ func TestLogoHasTwoSpaceMargin(t *testing.T) {
 		}
 		if !strings.HasPrefix(line, "  ") {
 			t.Fatalf("logo line %d lacks 2-space margin: %q", i, line)
-		}
-	}
-}
-
-func TestBoxRendersAtStandardWidth(t *testing.T) {
-	box := Box("Title", OK, "one line")
-	for i, line := range strings.Split(box, "\n") {
-		if w := lipgloss.Width(line); w != Width {
-			t.Fatalf("box line %d width = %d, want %d", i, w, Width)
 		}
 	}
 }
@@ -181,9 +163,61 @@ func TestSizeLabelFormat(t *testing.T) {
 
 func TestReceiptLine(t *testing.T) {
 	line := receiptLine("What do you want to do?", "doctor")
-	for _, want := range []string{"┃", "What do you want to do?", "→", "doctor"} {
+	if strings.Contains(line, "┃") {
+		t.Fatalf("receipt still carries the bar: %q", line)
+	}
+	if !strings.HasPrefix(line, "  ") {
+		t.Fatalf("receipt not indented: %q", line)
+	}
+	for _, want := range []string{"What do you want to do?", "→", "doctor"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("receipt missing %q: %q", want, line)
 		}
+	}
+}
+
+func TestSectionTitleUppercases(t *testing.T) {
+	got := SectionTitle("launch")
+	if !strings.Contains(got, "LAUNCH") {
+		t.Fatalf("SectionTitle = %q, want LAUNCH", got)
+	}
+	if strings.Contains(got, "launch") {
+		t.Fatalf("SectionTitle kept lowercase: %q", got)
+	}
+}
+
+func TestSectionIndentsBodyLines(t *testing.T) {
+	out := Section("TITLE", "row one", "", "row two")
+	lines := strings.Split(out, "\n")
+	want := []string{"TITLE", "  row one", "", "  row two"}
+	if len(lines) != len(want) {
+		t.Fatalf("Section lines = %q", lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Fatalf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestCopyZoneShape(t *testing.T) {
+	out := CopyZone("send to candidate", "http://example.test", "password: abc123")
+	lines := strings.Split(out, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("zone lines = %d, want 5:\n%s", len(lines), out)
+	}
+	if !strings.Contains(lines[0], "SEND TO CANDIDATE") {
+		t.Fatalf("label line = %q", lines[0])
+	}
+	for _, i := range []int{1, 4} {
+		if !strings.Contains(lines[i], "─") {
+			t.Fatalf("line %d is not a rule: %q", i, lines[i])
+		}
+		if w := lipgloss.Width(lines[i]); w != Width {
+			t.Fatalf("rule width = %d, want %d", w, Width)
+		}
+	}
+	if lines[2] != "http://example.test" || lines[3] != "password: abc123" {
+		t.Fatalf("interior not verbatim: %q / %q", lines[2], lines[3])
 	}
 }

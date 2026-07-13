@@ -244,7 +244,7 @@ func TestLaunchFailsWithoutConfiguredProvider(t *testing.T) {
 	if code == 0 {
 		t.Fatal("launch succeeded with no providers")
 	}
-	for _, want := range []string{"No providers configured", "interview init"} {
+	for _, want := range []string{"NO PROVIDERS CONFIGURED", "interview init"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("gate output missing %q:\n%s", want, out)
 		}
@@ -712,10 +712,10 @@ func TestLaunchConfirmNoCancelsCleanly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("declining the confirm must exit clean, got %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "Launch summary") ||
+	if !strings.Contains(out, "LAUNCH") ||
 		!strings.Contains(out, "Basic — 2 vCPU, 4 GB memory, 80 GB disk") ||
 		!strings.Contains(out, `~$0.04/h, billed until "interview destroy"`) {
-		t.Fatalf("summary box missing or wrong:\n%s", out)
+		t.Fatalf("summary section missing or wrong:\n%s", out)
 	}
 	if !strings.Contains(out, "launch cancelled — nothing provisioned") {
 		t.Fatalf("cancel notice missing:\n%s", out)
@@ -757,8 +757,8 @@ func TestLaunchYesSkipsConfirmButPrintsSummary(t *testing.T) {
 	// The run proceeds past the gate and may fail later in terraform; only
 	// the gate behavior is asserted.
 	out, _ := runCmd(t, "launch", "--yes")
-	if !strings.Contains(out, "Launch summary") {
-		t.Fatalf("summary box must still print with --yes:\n%s", out)
+	if !strings.Contains(out, "LAUNCH") {
+		t.Fatalf("summary section must still print with --yes:\n%s", out)
 	}
 }
 
@@ -780,8 +780,8 @@ func TestLaunchNonTTYSkipsSummaryAndConfirm(t *testing.T) {
 	}
 
 	out, _ := runCmd(t, "launch", "--region", "fra1", "--size", "s-2vcpu-4gb")
-	if strings.Contains(out, "Launch summary") {
-		t.Fatalf("non-TTY printed the summary box:\n%s", out)
+	if strings.Contains(out, "LAUNCH") {
+		t.Fatalf("non-TTY printed the summary section:\n%s", out)
 	}
 }
 
@@ -812,7 +812,7 @@ func TestLaunchSummaryFlagsPathFallsBackToSlugs(t *testing.T) {
 	}
 	// Flags path has no SizeInfo: region and size rows show the raw slugs,
 	// and no price row is rendered.
-	if !strings.Contains(out, "Launch summary") || !strings.Contains(out, "fra1") ||
+	if !strings.Contains(out, "LAUNCH") || !strings.Contains(out, "fra1") ||
 		!strings.Contains(out, "s-2vcpu-4gb") {
 		t.Fatalf("flags-path summary wrong:\n%s", out)
 	}
