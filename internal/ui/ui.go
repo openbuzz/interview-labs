@@ -3,13 +3,11 @@ package ui
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/openbuzz/interview-labs/internal/provider"
 	"golang.org/x/term"
 )
 
@@ -135,14 +133,6 @@ func Badge(configured bool) string {
 		return OK.Render(GlyphOK)
 	}
 	return Faint.Render(GlyphTodo)
-}
-
-// SizeLabel renders one size row: category, specs, ceil'd hourly price
-// (never understates), trailing slug.
-func SizeLabel(s provider.SizeInfo) string {
-	price := math.Ceil(s.Hourly*100) / 100
-	return fmt.Sprintf("%-16s%2d vCPU, %3d GB memory, %3d GB disk   ~%s%.2f/h   %s",
-		s.Category, s.VCPUs, s.MemGB, s.DiskGB, s.Currency, price, s.Slug)
 }
 
 // Theme is the huh theme on the same ANSI palette.

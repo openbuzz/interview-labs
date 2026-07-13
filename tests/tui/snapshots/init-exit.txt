@@ -16,21 +16,21 @@
 
 ┃ Select a provider to configure
 ┃ Credentials are validated live and stored in the config file (0600). Re-run any time.
-┃ > ○ DigitalOcean  — Cloud VM
-┃   ○ Hetzner  — Cloud VM
-┃   ○ AWS  — Cloud VM
-┃   ○ Local Docker  — Cloud VM
-┃   ○ OpenRouter  — AI Tooling
-┃   ○ Cloudflare  — DNS / access
+┃ > ○  DigitalOcean  Cloud VM
+┃   ○  Hetzner       Cloud VM
+┃   ○  AWS           Cloud VM
+┃   ○  Local Docker  Cloud VM
+┃   ○  OpenRouter    AI Tooling
+┃   ○  Cloudflare    DNS / access
 ┃   exit
 
 SETUP
-  ○ DigitalOcean  — Cloud VM
-  ○ Hetzner  — Cloud VM
-  ○ AWS  — Cloud VM
-  ○ Local Docker  — Cloud VM
-  ○ OpenRouter  — AI Tooling
-  ○ Cloudflare  — DNS / access
+  ○  DigitalOcean  Cloud VM
+  ○  Hetzner       Cloud VM
+  ○  AWS           Cloud VM
+  ○  Local Docker  Cloud VM
+  ○  OpenRouter    AI Tooling
+  ○  Cloudflare    DNS / access
 
 NEXT
   interview init

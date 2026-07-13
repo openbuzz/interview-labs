@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/openbuzz/interview-labs/internal/config"
@@ -40,7 +41,7 @@ archives metadata and logs under the XDG state directory and removes the
 session dir. Pass --yes to skip the confirmation.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDestroyCmd(cmd, args, yes)
+			return cancelled(cmd, runDestroyCmd(cmd, args, yes))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
@@ -61,8 +62,7 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 		return err
 	}
 
-	proceed, err := confirmDestroyGate(s, yes)
-	if err != nil || !proceed {
+	if _, err := confirmDestroyGate(s, yes); err != nil {
 		return err
 	}
 	release, err := s.Lock()
@@ -90,7 +90,7 @@ func runDestroyCmd(cmd *cobra.Command, args []string, yes bool) error {
 }
 
 // confirmDestroyGate blocks on the destroy confirmation unless yes is set;
-// proceed is false on a clean decline (err is nil) or a hard failure.
+// a decline aborts like ESC so the command cancels quietly.
 func confirmDestroyGate(s *session.Session, yes bool) (proceed bool, err error) {
 	if yes {
 		return true, nil
@@ -99,8 +99,11 @@ func confirmDestroyGate(s *session.Session, yes bool) (proceed bool, err error) 
 		return false, usageError("destroy needs --yes when not on a terminal")
 	}
 	ok, err := confirmDestroy(s)
-	if err != nil || !ok {
+	if err != nil {
 		return false, err
+	}
+	if !ok {
+		return false, huh.ErrUserAborted
 	}
 	return true, nil
 }

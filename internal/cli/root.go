@@ -42,6 +42,21 @@ func IsUsage(err error) bool {
 	return errors.As(err, &u)
 }
 
+// silencedErr marks errors already reported in command output; run and the
+// menu loop print nothing more for them, keeping a non-zero exit.
+type silencedErr struct{ err error }
+
+func (e silencedErr) Error() string { return e.err.Error() }
+func (e silencedErr) Unwrap() error { return e.err }
+
+func silenceError(err error) error { return silencedErr{err: err} }
+
+// isSilenced reports whether err was already reported to the user.
+func isSilenced(err error) bool {
+	var s silencedErr
+	return errors.As(err, &s)
+}
+
 // verbose streams raw terraform output instead of quiet phase rows.
 var verbose bool
 
@@ -63,6 +78,17 @@ func printLogoOnce(out io.Writer) {
 		fmt.Fprintln(out, l)
 		fmt.Fprintln(out)
 	}
+}
+
+// cancelled maps huh user-aborts to one faint line and a silenced error:
+// the exit stays non-zero, nothing else prints.
+func cancelled(cmd *cobra.Command, err error) error {
+	if err == nil || !errors.Is(err, huh.ErrUserAborted) {
+		return err
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "  "+ui.Faint.Render("cancelled"))
+	return silenceError(err)
 }
 
 const actionExit = "exit"
@@ -148,7 +174,8 @@ Start with "interview doctor", then "interview init".`,
 				if action == actionExit {
 					return nil
 				}
-				if err := runSubcommand(cmd.Context(), action, out, errW); err != nil {
+				if err := runSubcommand(cmd.Context(), action, out, errW); err != nil &&
+					!isSilenced(err) {
 					fmt.Fprintf(errW, "error: %v\n", err)
 				}
 				fmt.Fprintln(out)
@@ -179,7 +206,9 @@ func run(args []string) int {
 	root := newRootCmd()
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		if !isSilenced(err) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
 		if IsUsage(err) || isCobraUsage(err) {
 			return 2
 		}

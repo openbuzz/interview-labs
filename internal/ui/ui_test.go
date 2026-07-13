@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/openbuzz/interview-labs/internal/provider"
 )
 
 func TestNextContainsCommands(t *testing.T) {
@@ -123,41 +122,6 @@ func TestLogoOnce(t *testing.T) {
 	ResetLogoOnce()
 	if again := LogoOnce(); again == "" {
 		t.Fatal("reset did not re-arm the logo")
-	}
-}
-
-func TestSizeLabelFormat(t *testing.T) {
-	cases := []struct {
-		in   provider.SizeInfo
-		want string
-	}{
-		{
-			provider.SizeInfo{Slug: "s-2vcpu-4gb", Category: "Basic", VCPUs: 2,
-				MemGB: 4, DiskGB: 80, Hourly: 0.036, Currency: "$"},
-			"Basic            2 vCPU,   4 GB memory,  80 GB disk   ~$0.04/h   s-2vcpu-4gb",
-		},
-		{
-			// ceil: €0.0113 must render €0.02, never €0.01.
-			provider.SizeInfo{Slug: "cx32", Category: "Shared", VCPUs: 4,
-				MemGB: 8, DiskGB: 80, Hourly: 0.0113, Currency: "€"},
-			"Shared           4 vCPU,   8 GB memory,  80 GB disk   ~€0.02/h   cx32",
-		},
-		{
-			provider.SizeInfo{Slug: "g-2vcpu-8gb", Category: "General Purpose", VCPUs: 2,
-				MemGB: 8, DiskGB: 25, Hourly: 0.0938, Currency: "$"},
-			"General Purpose  2 vCPU,   8 GB memory,  25 GB disk   ~$0.10/h   g-2vcpu-8gb",
-		},
-		{
-			// exact 2-decimal price stays exact (no ceil drift).
-			provider.SizeInfo{Slug: "m5.large", Category: "General Purpose", VCPUs: 2,
-				MemGB: 8, DiskGB: 40, Hourly: 0.096, Currency: "$"},
-			"General Purpose  2 vCPU,   8 GB memory,  40 GB disk   ~$0.10/h   m5.large",
-		},
-	}
-	for _, c := range cases {
-		if got := SizeLabel(c.in); got != c.want {
-			t.Fatalf("SizeLabel(%s):\n got %q\nwant %q", c.in.Slug, got, c.want)
-		}
 	}
 }
 

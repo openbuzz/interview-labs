@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -51,12 +50,11 @@ dirs are skipped rather than failing the listing.`,
 // renderList prints sessions in columns sized to their content.
 func renderList(out io.Writer, all []*session.Session, now time.Time) {
 	head := []string{"SLUG", "PROVIDER", "REGION", "IP", "AGE", "STATUS"}
-	rows := listRows(all, now)
-	widths := columnWidths(head, rows)
+	lines := ui.Columns(append([][]string{head}, listRows(all, now)...))
 
-	fmt.Fprintln(out, ui.Faint.Render(formatRow(head, widths)))
-	for _, r := range rows {
-		fmt.Fprintln(out, formatRow(r, widths))
+	fmt.Fprintln(out, ui.Faint.Render(lines[0]))
+	for _, l := range lines[1:] {
+		fmt.Fprintln(out, l)
 	}
 }
 
@@ -72,33 +70,4 @@ func listRows(all []*session.Session, now time.Time) [][]string {
 			ip, formatAge(s.Age(now)), s.Meta.Status})
 	}
 	return rows
-}
-
-// columnWidths sizes each column to its widest cell, with the header as the floor.
-func columnWidths(head []string, rows [][]string) []int {
-	widths := make([]int, len(head))
-	for i, h := range head {
-		widths[i] = len(h)
-	}
-	for _, r := range rows {
-		for i, cell := range r {
-			if len(cell) > widths[i] {
-				widths[i] = len(cell)
-			}
-		}
-	}
-	return widths
-}
-
-// formatRow pads cells to widths, except the last column which is left ragged.
-func formatRow(cells []string, widths []int) string {
-	var b strings.Builder
-	for i, cell := range cells {
-		if i == len(cells)-1 {
-			b.WriteString(cell)
-			break
-		}
-		fmt.Fprintf(&b, "%-*s  ", widths[i], cell)
-	}
-	return b.String()
 }

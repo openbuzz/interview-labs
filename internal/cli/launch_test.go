@@ -1342,3 +1342,132 @@ func TestLaunchDirPackRunsSetup(t *testing.T) {
 		t.Fatalf("meta.Pack = %q", s.Meta.Pack)
 	}
 }
+
+func TestLaunchProviderFlagUnknownExits2(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	swapTTY(t, false)
+
+	out, code := runCmd(t, "launch", "--provider", "nope")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\n%s", code, out)
+	}
+	assertContainsAll(t, out, "unknown provider", "digitalocean", "local")
+}
+
+func TestLaunchProviderFlagUnconfiguredExits2(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	swapTTY(t, false)
+
+	out, code := runCmd(t, "launch", "--provider", "hetzner")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\n%s", code, out)
+	}
+	assertContainsAll(t, out, "not configured", "interview init")
+}
+
+func TestLaunchProviderFlagOverridesFirstConfigured(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok") // first configured would be DO
+	t.Setenv("HCLOUD_TOKEN", "htok")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	swapTTY(t, false)
+	_ = fakeTFForLaunch(t, "127.0.0.1", "", "")
+
+	// The run dies later in the pipeline (no live ssh endpoint); the pick
+	// is persisted before that and is all this test asserts.
+	_, _ = runCmd(t, "launch", "--provider", "hetzner",
+		"--region", "fsn1", "--size", "cx23")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Roles.VM != "hetzner" {
+		t.Fatalf("roles.vm = %q, want hetzner", cfg.Roles.VM)
+	}
+}
+
+func TestLaunchProviderFlagSkipsPickerOnTTY(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	swapTTY(t, true)
+	swapPickBundle(t, "")
+	oldPick := pickVMProvider
+	t.Cleanup(func() { pickVMProvider = oldPick })
+	pickVMProvider = func([]provider.Provider, string) (provider.Provider, error) {
+		t.Fatal("picker shown despite --provider")
+		return nil, nil
+	}
+	// Stop the run right after provider resolution.
+	oldRS := pickRegionSize
+	t.Cleanup(func() { pickRegionSize = oldRS })
+	pickRegionSize = func(_ context.Context, _ io.Writer, _ provider.VM,
+		_ config.Config) (provider.Option, provider.SizeInfo, error) {
+		return provider.Option{}, provider.SizeInfo{}, fmt.Errorf("stop here")
+	}
+
+	_, _ = runCmd(t, "launch", "--provider", "digitalocean")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Roles.VM != "digitalocean" {
+		t.Fatalf("roles.vm = %q, want digitalocean", cfg.Roles.VM)
+	}
+}
+
+func TestLaunchProviderPickerAbortCancelsQuietly(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	swapTTY(t, true)
+	swapPickBundle(t, "")
+	oldPick := pickVMProvider
+	t.Cleanup(func() { pickVMProvider = oldPick })
+	pickVMProvider = func([]provider.Provider, string) (provider.Provider, error) {
+		return nil, huh.ErrUserAborted
+	}
+
+	out, code := runCmd(t, "launch")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	if !strings.Contains(out, "cancelled") || strings.Contains(out, "error:") {
+		t.Fatalf("quiet-cancel shape wrong:\n%s", out)
+	}
+}

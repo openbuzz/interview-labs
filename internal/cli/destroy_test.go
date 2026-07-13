@@ -249,6 +249,36 @@ func TestDestroyRevoke404IsClean(t *testing.T) {
 	}
 }
 
+func TestDestroyDeclineCancelsQuietly(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	s, err := session.New("fra1", "s-1vcpu-1gb", "ubuntu-26-04-x64", "root",
+		map[string]string{"vm": "digitalocean"},
+		session.TerraformInfo{Binary: "terraform", Version: "1.9.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	swapTTY(t, true)
+	old := confirmDestroy
+	confirmDestroy = func(*session.Session) (bool, error) { return false, nil }
+	t.Cleanup(func() { confirmDestroy = old })
+
+	out, code := runCmd(t, "destroy")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	if !strings.Contains(out, "cancelled") {
+		t.Fatalf("missing cancelled line:\n%s", out)
+	}
+	if strings.Contains(out, "error:") {
+		t.Fatalf("error echo survived:\n%s", out)
+	}
+}
+
 func TestDestroyRevokeFailureKeepsSession(t *testing.T) {
 	s, _ := aiSessionSetup(t)
 	revokeServer(t, http.StatusInternalServerError)

@@ -64,28 +64,34 @@ sessions exec into the vscode container instead. With several sessions,
 pass a slug or pick one from the menu.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			printNarrowWarning(cmd.OutOrStdout())
-			ref := ""
-			if len(args) == 1 {
-				ref = args[0]
-			}
-			s, err := resolveSession(ref, "Select a session",
-				"Opens an interactive shell on the session VM.")
-			if err != nil {
-				return err
-			}
-			if isLocalSession(s) {
-				return execProgram([]string{"docker", "exec", "-it",
-					"interview-" + s.Meta.Slug + "-vscode", "bash"})
-			}
-			if s.Meta.IP == "" {
-				return fmt.Errorf("session %s has no IP (status %s)",
-					s.Meta.Slug, s.Meta.Status)
-			}
-			return execProgram(ssh.Argv(
-				s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, s.Meta.IP))
+			return cancelled(cmd, runSSHCmd(cmd, args))
 		},
 	}
+}
+
+// runSSHCmd resolves the session and hands the terminal to ssh (cloud) or
+// docker exec (local).
+func runSSHCmd(cmd *cobra.Command, args []string) error {
+	printNarrowWarning(cmd.OutOrStdout())
+	ref := ""
+	if len(args) == 1 {
+		ref = args[0]
+	}
+	s, err := resolveSession(ref, "Select a session",
+		"Opens an interactive shell on the session VM.")
+	if err != nil {
+		return err
+	}
+	if isLocalSession(s) {
+		return execProgram([]string{"docker", "exec", "-it",
+			"interview-" + s.Meta.Slug + "-vscode", "bash"})
+	}
+	if s.Meta.IP == "" {
+		return fmt.Errorf("session %s has no IP (status %s)",
+			s.Meta.Slug, s.Meta.Status)
+	}
+	return execProgram(ssh.Argv(
+		s.KeyPath(), s.KnownHostsPath(), s.Meta.SSHUser, s.Meta.IP))
 }
 
 func huhPickSession(all []*session.Session,

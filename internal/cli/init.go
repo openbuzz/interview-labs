@@ -26,9 +26,14 @@ var roleLabels = map[provider.Role]string{
 	provider.RoleAccess: "DNS / access",
 }
 
-func menuRow(p provider.Provider, cfg config.Config) string {
-	return ui.Badge(p.Configured(cfg)) + " " + p.Label() + "  — " +
-		roleLabels[p.Roles()[0]]
+// menuRows renders one aligned row per provider: badge, label, role.
+func menuRows(all []provider.Provider, cfg config.Config) []string {
+	rows := make([][]string, len(all))
+	for i, p := range all {
+		rows[i] = []string{ui.Badge(p.Configured(cfg)), p.Label(),
+			roleLabels[p.Roles()[0]]}
+	}
+	return ui.Columns(rows)
 }
 
 // pickInitAction is a seam; production shows the provider menu.
@@ -36,9 +41,10 @@ func menuRow(p provider.Provider, cfg config.Config) string {
 var pickInitAction = func(all []provider.Provider,
 	cfg config.Config) (provider.Provider, error) {
 	const exit = "exit"
+	rows := menuRows(all, cfg)
 	opts := make([]huh.Option[string], 0, len(all)+1)
-	for _, p := range all {
-		opts = append(opts, huh.NewOption(menuRow(p, cfg), p.Name()))
+	for i, p := range all {
+		opts = append(opts, huh.NewOption(rows[i], p.Name()))
 	}
 	opts = append(opts, huh.NewOption("exit", exit))
 
@@ -127,10 +133,9 @@ func runInitLoop(ctx context.Context, out io.Writer, cfg *config.Config) error {
 
 // printInitSummary renders the final per-provider state section and next step.
 func printInitSummary(out io.Writer, cfg config.Config) {
-	rows := make([]string, 0, len(providers))
+	rows := menuRows(providers, cfg)
 	anyConfigured := false
 	for _, p := range providers {
-		rows = append(rows, menuRow(p, cfg))
 		anyConfigured = anyConfigured || p.Configured(cfg)
 	}
 

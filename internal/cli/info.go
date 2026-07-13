@@ -15,21 +15,26 @@ size, created — plus the raw ssh line and next steps for ready sessions.
 Without a slug: the sole session, or an interactive picker on a terminal.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out := cmd.OutOrStdout()
-			printNarrowWarning(out)
-
-			ref := ""
-			if len(args) == 1 {
-				ref = args[0]
-			}
-			s, err := resolveSession(ref, "Select a session",
-				"Shows the session's connection and lifecycle details.")
-			if err != nil {
-				return err
-			}
-
-			printHandover(out, s)
-			return nil
+			return cancelled(cmd, runInfoCmd(cmd, args))
 		},
 	}
+}
+
+// runInfoCmd resolves the session and prints its handover details.
+func runInfoCmd(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	printNarrowWarning(out)
+
+	ref := ""
+	if len(args) == 1 {
+		ref = args[0]
+	}
+	s, err := resolveSession(ref, "Select a session",
+		"Shows the session's connection and lifecycle details.")
+	if err != nil {
+		return err
+	}
+
+	printHandover(out, s)
+	return nil
 }

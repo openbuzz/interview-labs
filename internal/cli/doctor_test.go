@@ -26,7 +26,9 @@ func runCmd(t *testing.T, args ...string) (string, int) {
 	root.SetArgs(args)
 	code := 0
 	if err := root.Execute(); err != nil {
-		fmt.Fprintf(&buf, "error: %v\n", err)
+		if !isSilenced(err) {
+			fmt.Fprintf(&buf, "error: %v\n", err)
+		}
 		if IsUsage(err) || isCobraUsage(err) {
 			code = 2
 		} else {
@@ -86,12 +88,16 @@ func TestDoctorAllGood(t *testing.T) {
 		t.Fatalf("exit = %d\n%s", code, out)
 	}
 	for _, want := range []string{
-		"terraform", "1.9.5", "DigitalOcean", "credentials valid",
-		"OpenRouter", "Cloudflare", "not configured",
+		"TOOLS", "CREDENTIALS", "terraform", "1.9.5", "DigitalOcean",
+		"credentials valid", "OpenRouter", "Cloudflare", "not configured",
+		"ready", "interview launch",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "state dirs") {
+		t.Fatalf("healthy state dirs row must be hidden:\n%s", out)
 	}
 }
 
@@ -114,10 +120,13 @@ func TestDoctorNoTFBinaryFails(t *testing.T) {
 	if !strings.Contains(out, "✗") {
 		t.Fatalf("no fail glyph:\n%s", out)
 	}
-	for _, want := range []string{"not configured", "run interview init"} {
+	for _, want := range []string{"not configured", "interview init", "1 problem"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "error:") {
+		t.Fatalf("silenced doctor error still printed:\n%s", out)
 	}
 }
 
@@ -175,6 +184,11 @@ func TestDoctorRejectedTokenFails(t *testing.T) {
 	}
 	if !strings.Contains(out, "rejected") {
 		t.Fatalf("missing rejection detail:\n%s", out)
+	}
+	for _, want := range []string{"1 problem", "interview init"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -292,5 +306,61 @@ func TestDoctorKindVersionFloor(t *testing.T) {
 	}
 	if !strings.Contains(out, "v1.36.2") {
 		t.Fatalf("kubectl version row missing:\n%s", out)
+	}
+}
+
+func TestDoctorVerdictPluralizes(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // terraform missing = problem 1
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "bad")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	old := validateCreds
+	validateCreds = func(context.Context, provider.CredentialValidator,
+		config.Config) error {
+		return errors.New("rejected") // problem 2
+	}
+	t.Cleanup(func() { validateCreds = old })
+
+	out, code := runCmd(t, "doctor")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	if !strings.Contains(out, "2 problems") {
+		t.Fatalf("verdict not pluralized:\n%s", out)
+	}
+}
+
+func TestDoctorSectionsOrderToolsFirst(t *testing.T) {
+	fakeTF(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("DIGITALOCEAN_TOKEN", "tok")
+	t.Setenv("HCLOUD_TOKEN", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	old := validateCreds
+	validateCreds = func(context.Context, provider.CredentialValidator,
+		config.Config) error {
+		return nil
+	}
+	t.Cleanup(func() { validateCreds = old })
+
+	out, _ := runCmd(t, "doctor")
+	tools, creds := strings.Index(out, "TOOLS"), strings.Index(out, "CREDENTIALS")
+	if tools == -1 || creds == -1 || tools > creds {
+		t.Fatalf("sections wrong or missing (TOOLS@%d, CREDENTIALS@%d):\n%s",
+			tools, creds, out)
+	}
+	if strings.Index(out, "terraform") > strings.Index(out, "DigitalOcean") {
+		t.Fatalf("tool row after credential row:\n%s", out)
 	}
 }

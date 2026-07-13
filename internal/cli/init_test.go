@@ -90,6 +90,25 @@ func TestInitConfiguresProviderThenExits(t *testing.T) {
 	}
 }
 
+func TestMenuRowsAlignWithoutDash(t *testing.T) {
+	cfg := config.Config{}
+	fps := []provider.Provider{
+		&fakeProvider{name: "digitalocean", label: "DigitalOcean"},
+		&fakeProvider{name: "or", label: "Kai"},
+	}
+
+	rows := menuRows(fps, cfg)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if strings.Index(rows[0], "Cloud VM") != strings.Index(rows[1], "Cloud VM") {
+		t.Fatalf("role column misaligned:\n%q\n%q", rows[0], rows[1])
+	}
+	if strings.Contains(rows[0], "—") {
+		t.Fatalf("dash separator survived: %q", rows[0])
+	}
+}
+
 func TestInitConfigureCancelReturnsToMenu(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

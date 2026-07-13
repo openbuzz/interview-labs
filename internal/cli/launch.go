@@ -108,10 +108,11 @@ func sizeOptions(ctx context.Context, vm provider.VM, cfg config.Config,
 		return sizes[i].Slug < sizes[j].Slug
 	})
 
+	labels := ui.SizeRows(sizes)
 	opts := make([]huh.Option[string], 0, len(sizes))
 	bySlug := make(map[string]provider.SizeInfo, len(sizes))
-	for _, s := range sizes {
-		opts = append(opts, huh.NewOption(ui.SizeLabel(s), s.Slug))
+	for i, s := range sizes {
+		opts = append(opts, huh.NewOption(labels[i], s.Slug))
 		bySlug[s.Slug] = s
 	}
 	return opts, bySlug, nil
@@ -269,6 +270,7 @@ func bundleProfile(b *pack.Bundle, cfg config.Config, noAI bool) string {
 
 // launchFlags bundles the launch command's flag values.
 type launchFlags struct {
+	provider              string
 	region, size, profile string
 	image, gateway, tag   string
 	packRef, bundle       string
@@ -305,9 +307,11 @@ session gets a proxied DNS record. --no-ai and --no-dns skip them.
 
 The VM bills hourly until "interview destroy".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLaunchCmd(cmd, f)
+			return cancelled(cmd, runLaunchCmd(cmd, f))
 		},
 	}
+	cmd.Flags().StringVar(&f.provider, "provider", "",
+		"vm provider: digitalocean, hetzner, aws, local")
 	cmd.Flags().StringVar(&f.region, "region", "",
 		"provider region slug (e.g. fra1, fsn1, eu-central-1)")
 	cmd.Flags().StringVar(&f.size, "size", "",
@@ -345,7 +349,7 @@ func runLaunchCmd(cmd *cobra.Command, f *launchFlags) error {
 	if err != nil {
 		return err
 	}
-	sel, err := selectVMProvider(out, &cfg)
+	sel, err := selectVMProvider(out, &cfg, f.provider)
 	if err != nil {
 		return err
 	}
@@ -468,11 +472,14 @@ func confirmGate(out io.Writer, vm provider.VM, regionLabel, region string,
 	return false, nil
 }
 
-// selectVMProvider gates on configured vm-role providers, picks one on a
-// TTY, and persists the pick as the session-role preselect.
-func selectVMProvider(out io.Writer, cfg *config.Config) (provider.Provider, error) {
-	configured := make([]provider.Provider, 0, len(providers))
-	for _, p := range provider.ByRole(providers, provider.RoleVM) {
+// selectVMProvider gates on configured vm-role providers, resolves the
+// --provider flag or picks on a TTY, and persists the pick as the
+// session-role preselect.
+func selectVMProvider(out io.Writer, cfg *config.Config,
+	flag string) (provider.Provider, error) {
+	vmProviders := provider.ByRole(providers, provider.RoleVM)
+	configured := make([]provider.Provider, 0, len(vmProviders))
+	for _, p := range vmProviders {
 		if p.Configured(*cfg) {
 			configured = append(configured, p)
 		}
@@ -486,7 +493,14 @@ func selectVMProvider(out io.Writer, cfg *config.Config) (provider.Provider, err
 	}
 
 	sel := configured[0]
-	if isTTY() {
+	switch {
+	case flag != "":
+		p, err := providerByFlag(vmProviders, configured, flag)
+		if err != nil {
+			return nil, err
+		}
+		sel = p
+	case isTTY():
 		var err error
 		sel, err = pickVMProvider(configured, cfg.Roles.VM)
 		if err != nil {
@@ -499,6 +513,30 @@ func selectVMProvider(out io.Writer, cfg *config.Config) (provider.Provider, err
 		return nil, err
 	}
 	return sel, nil
+}
+
+// providerByFlag resolves --provider: configured match, else a usage error
+// telling unconfigured apart from unknown.
+func providerByFlag(vmProviders, configured []provider.Provider,
+	flag string) (provider.Provider, error) {
+	for _, p := range configured {
+		if p.Name() == flag {
+			return p, nil
+		}
+	}
+	for _, p := range vmProviders {
+		if p.Name() == flag {
+			return nil, usageError(fmt.Sprintf(
+				"provider %q not configured — run interview init", flag))
+		}
+	}
+
+	names := make([]string, len(vmProviders))
+	for i, p := range vmProviders {
+		names[i] = p.Name()
+	}
+	return nil, usageError(fmt.Sprintf("unknown provider %q (one of %s)",
+		flag, strings.Join(names, ", ")))
 }
 
 // activeAI resolves the AI provider a launch uses: the sole configured one,
@@ -612,21 +650,23 @@ func launchSummary(vm provider.VM, regionLabel, region string,
 	if regionRow == "" {
 		regionRow = region
 	}
-	sizeRow, rows := size, []string{}
+	sizeRow := size
 	if si != nil {
 		sizeRow = fmt.Sprintf("%s — %d vCPU, %d GB memory, %d GB disk",
 			si.Category, si.VCPUs, si.MemGB, si.DiskGB)
 	}
-	rows = append(rows,
-		"Provider   "+vm.Label(),
-		"Region     "+regionRow,
-		"Size       "+sizeRow)
+	cells := [][]string{
+		{"Provider", vm.Label()},
+		{"Region", regionRow},
+		{"Size", sizeRow},
+	}
 	if si != nil {
 		price := math.Ceil(si.Hourly*100) / 100
-		rows = append(rows, fmt.Sprintf("Price      ~%s%.2f/h, billed until %q",
-			si.Currency, price, "interview destroy"))
+		cells = append(cells, []string{"Price",
+			fmt.Sprintf("~%s%.2f/h, billed until %q", si.Currency, price,
+				"interview destroy")})
 	}
-	return ui.Section(ui.SectionTitle("launch"), rows...)
+	return ui.Section(ui.SectionTitle("launch"), ui.Columns(cells)...)
 }
 
 // step runs one launch/destroy phase: a spinner row when quiet, plain
