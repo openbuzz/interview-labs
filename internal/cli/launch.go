@@ -665,7 +665,21 @@ func runLaunch(ctx context.Context, out io.Writer, in launchInputs,
 	}); err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { client.Close() }()
+
+	if err := step(out, quiet, "cloud-init", func() error {
+		return waitCloudInit(ctx, client, s)
+	}); err != nil {
+		return err
+	}
+
+	// cloud-init adds non-root ssh users to the docker group, and sshd
+	// freezes group membership per connection — reconnect so the stack
+	// phases see it.
+	client.Close()
+	if client, err = redialSSH(ctx, s, ip); err != nil {
+		return err
+	}
 
 	if err := stackPhases(ctx, out, quiet, client, in, s); err != nil {
 		return err
@@ -714,16 +728,11 @@ func newSessionRunner(out io.Writer, creds map[string]string,
 	}, nil
 }
 
-// stackPhases provisions the container stack on the VM: docker readiness,
-// compose push, image pull, optional key mint, compose up. Pull runs before
-// mint so a failed pull never leaves an orphaned AI key.
+// stackPhases provisions the container stack on the VM: compose push, image
+// pull, optional key mint, compose up. Pull runs before mint so a failed
+// pull never leaves an orphaned AI key.
 func stackPhases(ctx context.Context, out io.Writer, quiet bool, client *ssh.Client,
 	in launchInputs, s *session.Session) error {
-	if err := step(out, quiet, "cloud-init", func() error {
-		return waitCloudInit(ctx, client, s)
-	}); err != nil {
-		return err
-	}
 	if err := step(out, quiet, "push stack", func() error {
 		return pushStack(ctx, client, s)
 	}); err != nil {
@@ -1077,6 +1086,12 @@ func waitSSH(ctx context.Context, s *session.Session, ip string) (*ssh.Client, e
 	if err := s.SetPhase("wait-ssh"); err != nil {
 		return nil, err
 	}
+	return redialSSH(ctx, s, ip)
+}
+
+// redialSSH opens a fresh connection to an already-answering VM; no phase
+// write, so mid-pipeline reconnects keep the session's phase intact.
+func redialSSH(ctx context.Context, s *session.Session, ip string) (*ssh.Client, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
