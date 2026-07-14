@@ -39,3 +39,11 @@ homebrew_casks:
     homepage: https://github.com/openbuzz/interview-labs
     description: Disposable cloud interview labs — one VM per session
     license: Apache-2.0
+    hooks:
+      post:
+        # Unsigned binary: strip the quarantine bit so Gatekeeper allows first launch.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/interview"]
+          end
